@@ -31,8 +31,9 @@ GitHub Actions(打 `v*` tag 或手动触发)会构建 Linux x86_64 / aarch64 两
     ├── SKILL.md
     ├── commands.md
     ├── README.md
-    ├── .env.example       # 面板账号配置模板(复制为 .env 并填写)
+    ├── .env.example       # 面板账号配置模板(根目录副本)
     └── bin/
+        ├── .env.example   # 配置模板(复制为 .env 并填写,与二进制同目录)
         └── 1panel-cli     # 可执行文件
 ```
 

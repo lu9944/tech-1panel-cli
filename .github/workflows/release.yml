@@ -60,6 +60,7 @@ jobs:
           mkdir -p "$STAGE/bin"
           cp SKILL.md commands.md README.md .env.example "$STAGE/"
           cp cli/target/release/1panel-cli "$STAGE/bin/"
+          cp .env.example "$STAGE/bin/.env.example"
           chmod +x "$STAGE/bin/1panel-cli"
           python3 - <<'PYEOF'
           import os, zipfile
@@ -69,10 +70,15 @@ jobs:
                   for f in files:
                       p = os.path.join(root, f)
                       z.write(p, p)
-          # 自检: zip 必须包含 SKILL.md 与 .env.example
+          # 自检: zip 必须包含 SKILL.md / .env.example(bin 与根目录各一份)/ 二进制
           with zipfile.ZipFile(out) as z:
               names = set(z.namelist())
-              required = {"1panel-skill/SKILL.md", "1panel-skill/.env.example", "1panel-skill/bin/1panel-cli"}
+              required = {
+                  "1panel-skill/SKILL.md",
+                  "1panel-skill/.env.example",
+                  "1panel-skill/bin/.env.example",
+                  "1panel-skill/bin/1panel-cli",
+              }
               missing = required - names
               if missing:
                   raise SystemExit(f"zip 缺少必需文件: {sorted(missing)}")
