@@ -24,7 +24,7 @@ metadata:
   1. `<本 skill 目录>/bin/1panel-cli` — 解压 `1panel-skill.zip` 后的标准位置
   2. `/root/code/1panel-cli/target/release/1panel-cli` — 本地开发构建
   3. `PATH` 中的 `1panel-cli`
-- 配置: 二进制同目录或当前工作目录下的 `.env`(PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD / PANEL_ENTRANCE),模板见同目录 `.env.example`
+- 配置: 把 `bin/.env.example` 复制为 `bin/.env` 并填写(PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD / PANEL_ENTRANCE),CLI 会自动读取二进制同目录的 `.env`;也可放在当前工作目录
 - 会话凭据自动保存在 `~/.config/1panel-cli/<profile>.json`,登录一次后无需重复登录
 
 执行命令前先确定二进制路径,例如:
