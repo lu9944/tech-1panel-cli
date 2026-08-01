@@ -20,22 +20,36 @@ metadata:
 
 ## 环境
 
-- 二进制: `/root/code/1panel-cli/target/release/1panel-cli`(如不存在先 `cargo build --release`)
-- 配置: `/root/code/1panel-cli/.env`(PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD / PANEL_ENTRANCE)
+- 二进制位置(按顺序探测,取第一个存在的):
+  1. `<本 skill 目录>/bin/1panel-cli` — 解压 `1panel-skill.zip` 后的标准位置
+  2. `/root/code/1panel-cli/target/release/1panel-cli` — 本地开发构建
+  3. `PATH` 中的 `1panel-cli`
+- 配置: 二进制同目录或当前工作目录下的 `.env`(PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD / PANEL_ENTRANCE),模板见同目录 `.env.example`
 - 会话凭据自动保存在 `~/.config/1panel-cli/<profile>.json`,登录一次后无需重复登录
+
+执行命令前先确定二进制路径,例如:
+
+```sh
+CLI=/root/code/1panel-cli/target/release/1panel-cli   # 本地开发
+# 或
+CLI="$(dirname "$0")/bin/1panel-cli"                  # zip 解压后(相对本 skill 目录)
+# 或把 bin/1panel-cli 加入 PATH 后直接用 1panel-cli
+```
 
 ## 第一步:检查环境
 
 任何操作前先执行:
 
 ```
-/root/code/1panel-cli/target/release/1panel-cli doctor
+"$CLI" doctor
 ```
 
 - 全部通过 → 继续后续操作
 - 某项失败 → 按输出中的指导修复(改 .env、检查地址连通性等),不要跳过
 
 ## 常用命令速查
+
+> 以下命令用 `1panel-cli` 表示;实际执行时按上方环境说明使用探测到的二进制路径。
 
 ```sh
 # 会话
@@ -93,7 +107,7 @@ metadata:
 1panel-cli api delete core/xxx
 ```
 
-完整命令速查见同目录 `commands.md`,README 见 `/root/code/1panel-cli/README.md`。
+完整命令速查见同目录 `commands.md`,CLI 源码与构建说明见仓库 `cli/` 目录(README 在 `cli/README.md`)。
 
 ## 关键约定
 

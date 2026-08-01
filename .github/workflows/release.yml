@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号(如 v0.1.0),留空则自动生成"
+        required: false
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            artifact: 1panel-skill
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            artifact: 1panel-skill-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            cli/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('cli/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-
+
+      - name: Build 1panel-cli (release)
+        working-directory: cli
+        run: cargo build --release --locked
+
+      - name: Assemble 1panel-skill.zip
+        run: |
+          set -euxo pipefail
+          STAGE="1panel-skill"
+          rm -rf "$STAGE" "${{ matrix.artifact }}.zip"
+          mkdir -p "$STAGE/bin"
+          cp SKILL.md commands.md README.md .env.example "$STAGE/"
+          cp cli/target/release/1panel-cli "$STAGE/bin/"
+          chmod +x "$STAGE/bin/1panel-cli"
+          python3 - <<'PYEOF'
+          import os, zipfile
+          src, out = "1panel-skill", "${{ matrix.artifact }}.zip"
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+              for root, _, files in os.walk(src):
+                  for f in files:
+                      p = os.path.join(root, f)
+                      z.write(p, p)
+          print(f"created {out}")
+          with zipfile.ZipFile(out) as z:
+              for n in z.namelist():
+                  print("  ", n)
+          PYEOF
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "1panel-cli ${{ steps.tag.outputs.tag }}"
+          body: |
+            ## 1panel-cli Skill Release
+
+            - `1panel-skill.zip` — Linux x86_64
+            - `1panel-skill-aarch64.zip` — Linux aarch64
+
+            解压后目录结构:
+            ```
+            1panel-skill/
+            ├── SKILL.md       # skill 主体(复制到 ~/.config/opencode/skills/1panel-cli/)
+            ├── commands.md    # 命令速查表
+            ├── README.md
+            ├── .env.example   # 面板账号配置模板(复制为 .env 并填写)
+            └── bin/
+                └── 1panel-cli # 可执行文件
+            ```
+
+            首次使用: 编辑 `.env` 填入 PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD,运行 `./bin/1panel-cli doctor` 检查环境。
+          files: dist/*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true

@@ -1,0 +1,6 @@
+# Rust 构建产物
+cli/target/
+# 真实凭据
+.env
+# 打包产物
+*.zip
