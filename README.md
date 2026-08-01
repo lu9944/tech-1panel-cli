@@ -31,12 +31,13 @@ GitHub Actions(打 `v*` tag 或手动触发)会构建 Linux x86_64 / aarch64 两
     ├── SKILL.md
     ├── commands.md
     ├── README.md
-    ├── .env.example
+    ├── .env.example       # 面板账号配置模板(复制为 .env 并填写)
     └── bin/
         └── 1panel-cli     # 可执行文件
 ```
 
-发布到仓库 Releases: `1panel-skill.zip`(x86_64)、`1panel-skill-aarch64.zip`(aarch64)。
+源码(`cli/` 目录)同样包含 `.env.example`。发布到仓库 Releases:
+`1panel-skill.zip`(x86_64)、`1panel-skill-aarch64.zip`(aarch64)。
 
 ## 使用
 

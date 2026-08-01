@@ -69,10 +69,16 @@ jobs:
                   for f in files:
                       p = os.path.join(root, f)
                       z.write(p, p)
-          print(f"created {out}")
+          # 自检: zip 必须包含 SKILL.md 与 .env.example
           with zipfile.ZipFile(out) as z:
-              for n in z.namelist():
+              names = set(z.namelist())
+              required = {"1panel-skill/SKILL.md", "1panel-skill/.env.example", "1panel-skill/bin/1panel-cli"}
+              missing = required - names
+              if missing:
+                  raise SystemExit(f"zip 缺少必需文件: {sorted(missing)}")
+              for n in sorted(names):
                   print("  ", n)
+          print(f"created {out} (自检通过)")
           PYEOF
 
       - name: Upload artifact
