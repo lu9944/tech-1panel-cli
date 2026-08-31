@@ -89,6 +89,39 @@
 
 `<PORT>` 支持 `8080`(匹配任意宿主 IP)或 `0.0.0.0:8080` 形式;策略会应用到所有匹配的已发布端口。更高级的规则同步(`rules/sync`)、重置(`rules/reset`)与排序(`rules/reorder`)可通过 `api` 命令调用。
 
+## exec — 在面板本机执行命令
+
+通过终端 WebSocket(`/api/v2/hosts/terminal/local`)把单行命令推送到面板本机执行,等待完成后一次性取回输出,非交互。退出码透传:命令完成时 CLI 以命令退出码退出(0 成功;1-255 透传;124 超时;CLI 自身错误为 1,可用 `--json` 的 `error` 字段精确区分)。
+
+前置条件:面板已配置「设置 → 终端 → SSH 本地连接」;未配置时可在 `.env` 中提供 `LINUX_SSH_USER` / `LINUX_SSH_PWD`,然后用 `--sync-ssh` 自动写入。
+
+| 命令 | 说明 |
+|---|---|
+| `exec <COMMAND> [--timeout SECS]` | 执行单行命令(不能含换行;默认超时 30s,超时返回 124 并打印已收集输出) |
+| `exec <CMD> --cwd DIR` | 执行前先 `cd -- 'DIR'` |
+| `exec <CMD> --json` | 输出单行 `{"exit_code","duration_ms","truncated","error","output"}` |
+| `exec <CMD> --tail N` | 仅显示清洗后输出的最后 N 行 |
+| `exec <CMD> --raw` | 不清洗输出(保留 ANSI/回显/提示符/哨兵;默认剥离) |
+| `exec <CMD> --cols N --rows N` | PTY 尺寸(默认 120x40) |
+| `exec <CMD> --sync-ssh [--ssh-port N]` | 先用 LINUX_SSH_USER/LINUX_SSH_PWD 自动配置本地 SSH 连接再执行 |
+
+示例:
+
+```sh
+1panel-cli exec 'ls -la /var/www'
+1panel-cli exec 'echo hello && hostname' --sync-ssh
+1panel-cli exec 'bash deploy.sh' --cwd /opt/myapp --timeout 300
+1panel-cli exec 'systemctl status docker' --timeout 10; echo "exit=$?"
+1panel-cli exec 'whoami' --json
+1panel-cli exec 'bash build.sh' --cwd /opt/app --tail 50
+# 长任务推荐"无状态轮询",不要拉大 --timeout 硬等:
+1panel-cli exec 'nohup bash deploy.sh > /tmp/deploy.log 2>&1 &'
+1panel-cli exec 'tail -n 50 /tmp/deploy.log'
+1panel-cli exec 'pgrep -f deploy.sh'   # 退出码 0=还在跑
+```
+
+注意:交互式命令(`sudo` 要密码、`top`/`vim` 等 TUI)会挂到超时;用 `-y`、`</dev/null` 等非交互参数。命令经 `( )` 子 shell 执行,`exit`/`exec` 类命令安全且退出码仍可透传。
+
 ## api — 发现和调用 API
 
 | 命令 | 说明 |

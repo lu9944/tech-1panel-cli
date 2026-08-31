@@ -89,6 +89,24 @@ POST /files/move/stop
 - 面板设置新增 `AllowIPTrustedProxies`,API 设置页新增 `apiTrustedProxies`(仅影响服务端解析客户端 IP,不影响 CLI)。
 - Dashboard 新增 NPU/GPU 字段(`npuData`、`pciBdfAddress` 等),纯响应扩展,不破坏解析。
 
+## 终端 WebSocket(exec 命令,v0.4.0 新增)
+
+`exec` 命令依赖的终端接口在 v2.2.5 与 dev-v2 完全一致(`git diff v2.2.5 origin/dev-v2` 已复核 `core/utils/terminal/ws_session.go`、`agent/app/api/v2/terminal.go`、设置服务与 `/hosts/terminal/*` 路由均无差异):
+
+```
+GET /api/v2/hosts/terminal/local   # command/cols/rows 查询参数,WS 升级,会话 Cookie 认证
+POST /api/v2/settings/ssh          # 保存面板本地 SSH 连接(--sync-ssh 使用,password base64)
+GET /api/v2/settings/ssh/conn      # 读取本地连接配置(addr 为空即未配置)
+POST /api/v2/settings/ssh/default  # defaultConn=Disable & withReset=true 可清除本地连接
+```
+
+实测要点(2026-08-31,v2.2.5 面板):
+
+- WS 握手只需会话 Cookie + `CurrentNode: local`,无需 CSRF 与安全入口路径。
+- agent 发生的**错误以 Close 帧返回,但 payload 是裸错误文本,不含 RFC 6455 的 2 字节状态码**(gorilla `WriteControl(CloseMessage, err)` 的行为)。tungstenite 客户端解析时会把前 2 字节当作状态码,而 "fa"("failed to..." 开头)等不是合法状态码,于是整帧被替换为 `reason="Protocol violation"`,**原始错误文本不可读**。因此 `exec` 在收到 Close 帧后改用 `GET /settings/ssh/conn` 探测归因:addr 为空 → "本地 SSH 连接未配置";非空 → 提示凭据可能已变更可 `--sync-ssh` 覆盖。
+- 完成信号采用"随机哨兵携带 `$?`":实际注入 ` clear &&( <用户命令> ); echo __1PCLI_<token>_$?`。用户命令放进 `( )` 子 shell,`exit`/`exec` 类命令只结束子 shell,哨兵仍在外层执行并透传退出码(实测 `exec 'exit 7' --json` 返回 `exit_code:7` 且 CLI 退出码为 7)。
+- 命令正常结束(哨兵命中)后客户端主动关闭 WS;若用户命令杀掉外层 shell,WS 以 TCP EOF 结束(无 Close 帧),`exec` 报"连接被意外关闭"。
+
 ## 范围与限制
 
 - 清单覆盖开源仓库 `agent/router` 与 `core/router`。企业版闭源 LDAP/OIDC/SAML 扩展路由不在源码清单内。

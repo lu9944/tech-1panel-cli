@@ -11,6 +11,7 @@ mod config;
 mod crypto;
 mod db;
 mod doctor;
+mod exec;
 mod firewall;
 mod redis;
 mod session;
@@ -119,6 +120,38 @@ enum Commands {
         /// 强制重新登录以验证 .env 中的账号密码
         #[arg(long)]
         force: bool,
+    },
+    /// 在面板本机执行单行命令(通过终端 WebSocket,非交互)
+    Exec {
+        /// 要执行的单行命令(不能包含换行符)
+        command: String,
+        /// 超时秒数(超时返回 124,已收集内容仍会打印)
+        #[arg(long, default_value_t = exec::DEFAULT_TIMEOUT_SECS)]
+        timeout: i64,
+        /// 执行前先切换到指定目录
+        #[arg(long)]
+        cwd: Option<String>,
+        /// PTY 列数(默认 120)
+        #[arg(long, default_value_t = exec::DEFAULT_COLS)]
+        cols: i64,
+        /// PTY 行数(默认 40)
+        #[arg(long, default_value_t = exec::DEFAULT_ROWS)]
+        rows: i64,
+        /// 输出单行结构化 JSON(适合脚本/AI 消费)
+        #[arg(long)]
+        json: bool,
+        /// 仅显示清洗后输出的最后 N 行
+        #[arg(long)]
+        tail: Option<usize>,
+        /// 不做输出清洗(保留 ANSI/回显/提示符/哨兵)
+        #[arg(long)]
+        raw: bool,
+        /// 用 LINUX_SSH_USER / LINUX_SSH_PWD 自动配置面板本地 SSH 连接后执行
+        #[arg(long)]
+        sync_ssh: bool,
+        /// --sync-ssh 时使用的 SSH 端口(默认 22)
+        #[arg(long, default_value_t = exec::DEFAULT_SSH_PORT)]
+        ssh_port: u16,
     },
 }
 
@@ -707,6 +740,8 @@ fn main() -> Result<()> {
                 captcha_id,
                 insecure: Some(insecure),
                 language: None,
+                linux_ssh_user: None,
+                linux_ssh_pwd: None,
             };
             let cfg = config::PanelConfig::from_env(&overrides)?;
             auth::login(&cfg, &cli.profile)?;
@@ -1100,6 +1135,32 @@ fn main() -> Result<()> {
             }
         },
         Commands::Doctor { force } => doctor::doctor(&cli.profile, force)?,
+        Commands::Exec {
+            command,
+            timeout,
+            cwd,
+            cols,
+            rows,
+            json,
+            tail,
+            raw,
+            sync_ssh,
+            ssh_port,
+        } => {
+            let opts = exec::ExecOptions {
+                command,
+                timeout,
+                cwd,
+                cols,
+                rows,
+                json,
+                tail,
+                raw,
+                sync_ssh,
+                ssh_port,
+            };
+            std::process::exit(exec::run(&cli.profile, &opts)?);
+        }
     }
 
     Ok(())

@@ -25,6 +25,9 @@ cbc = "0.1"
 cipher = "0.4"
 anyhow = "1"
 percent-encoding = "2"
+tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23", features = ["ring"] }
+http = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

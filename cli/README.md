@@ -15,6 +15,7 @@
 - `redis` Redis 实例操作:状态/配置/密码(与 db 平级)
 - `firewall` 防火墙操作:状态、启停、Ping、端口/IP/转发规则增删查、批量放行;新版面板支持 Docker 端口守护(status/ports/sync/operate/allow/deny/policy-del)
 - `web`    网站(OpenResty/nginx)操作:网站列表、nginx 配置读写、HTTPS/SSL、文件上传与解压
+- `exec`   在面板本机执行单行命令(终端 WebSocket):退出码透传、输出清洗、`--cwd`/`--timeout`/`--json`/`--tail`、`--sync-ssh` 自动配置本地 SSH 连接
 - `api`    发现官方源码路由、查看 Swagger 模型并调用 GET/POST/PUT/DELETE
 
 ## 构建
@@ -52,6 +53,10 @@ PANEL_PASSWORD=changeme
 
 # 可选:多节点面板目标节点(默认 local)
 # PANEL_NODE=local
+
+# 可选:面板所在主机的 SSH 凭据(仅 exec --sync-ssh 自动配置本地连接时使用)
+# LINUX_SSH_USER=ubuntu
+# LINUX_SSH_PWD=changeme
 ```
 
 ## 使用示例
@@ -155,6 +160,17 @@ PANEL_PASSWORD=changeme
 1panel-cli firewall docker allow 8080 --sources 1.2.3.4 --desc web   # 仅允许指定来源
 1panel-cli firewall docker deny 0.0.0.0:8080 --desc '对外关闭'        # 拒绝所有来源
 1panel-cli firewall docker policy-del --uuid <UUID>                  # 删除策略
+
+# 在面板本机执行命令(前置:面板已配置本地 SSH 连接,或用 --sync-ssh 自动配置)
+1panel-cli exec 'echo hello && hostname' --sync-ssh  # 自动写入本地 SSH 连接后执行
+1panel-cli exec 'df -h && free -m'                   # 执行并打印清洗后输出
+1panel-cli exec 'bash deploy.sh' --cwd /opt/myapp --timeout 300   # 切目录 + 调大超时
+1panel-cli exec 'systemctl status docker'; echo "exit=$?"         # 退出码透传
+1panel-cli exec 'whoami' --json                      # 单行 JSON 结构化结果
+1panel-cli exec 'bash build.sh' --cwd /opt/app --tail 50          # 超长输出只看结尾
+# 长任务建议后台化后轮询日志,不要拉大 --timeout 硬等:
+1panel-cli exec 'nohup bash deploy.sh > /tmp/deploy.log 2>&1 &'
+1panel-cli exec 'tail -n 50 /tmp/deploy.log'
 
 # 网站(OpenResty/nginx)管理
 # 列出所有网站/域名

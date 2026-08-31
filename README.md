@@ -18,6 +18,7 @@
 - **Redis `redis`**:实例状态/配置读写/密码
 - **网站 `web`**:网站列表、nginx 配置读写(保存后自动 reload)、HTTPS/SSL 证书、文件上传与解压
 - **防火墙 `firewall`**:自动适配新版统一规则接口与 v2.2.5 旧接口,支持状态/启停/Ping、端口/IP/转发规则增删查、批量放行;新版面板额外支持 Docker 端口守护(`firewall docker` 状态/列表/同步/放行/拒绝)
+- **远程执行 `exec`**:通过终端 WebSocket 在面板本机执行单行命令,退出码透传,支持 `--cwd`、`--timeout`、`--json`、`--tail` 与输出清洗;可用 `--sync-ssh` 结合 `LINUX_SSH_USER`/`LINUX_SSH_PWD` 自动配置面板本地 SSH 连接
 - **API `api`**:从官方源码生成 766 条路由目录,可 list/describe 并调用 GET/POST/PUT/DELETE,自动携带 Cookie、CSRF、语言和节点头
 
 ## 安装
@@ -105,6 +106,7 @@ cp -r 1panel-skill ~/.config/opencode/skills/1panel-cli
 | `PANEL_MFA_CODE` | 否 | 开启 MFA 时的动态验证码(自动化场景) |
 | `PANEL_CAPTCHA` / `PANEL_CAPTCHA_ID` | 否 | 登录验证码答案与 ID(配合外部 OCR 自动化) |
 | `PANEL_INSECURE` | 否 | 面板为 HTTPS 且使用自签名证书时设为 `true` |
+| `LINUX_SSH_USER` / `LINUX_SSH_PWD` | 否 | 面板所在主机的 SSH 凭据,仅 `exec --sync-ssh` 自动配置本地连接时使用 |
 
 CLI 启动时依次从当前目录、可执行文件所在目录查找 `.env`,也可用 `--env <path>` 指定,或通过 `--profile <name>` 保存多套配置;同时支持环境变量与命令行参数。配置优先级:**命令行参数 > 环境变量 > .env 文件**。
 
@@ -119,7 +121,7 @@ CLI 启动时依次从当前目录、可执行文件所在目录查找 `.env`,�
 ```
 tech-1panel-cli/
 ├── SKILL.md               # 技能主体(触发条件、环境检查、命令速查、关键约定)
-├── commands.md            # 完整命令速查表(会话 / apps / db / redis / web / firewall / api)
+├── commands.md            # 完整命令速查表(会话 / apps / db / redis / web / firewall / exec / api)
 ├── .env.example           # 面板账号配置模板
 ├── references/            # dev-v2 API 清单与兼容性审计
 ├── scripts/               # API 清单生成器

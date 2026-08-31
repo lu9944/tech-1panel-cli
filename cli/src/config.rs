@@ -12,11 +12,18 @@ pub const ENV_CAPTCHA_ID: &str = "PANEL_CAPTCHA_ID";
 pub const ENV_LANGUAGE: &str = "PANEL_LANGUAGE";
 pub const ENV_INSECURE: &str = "PANEL_INSECURE";
 pub const ENV_NODE: &str = "PANEL_NODE";
+pub const ENV_LINUX_SSH_USER: &str = "LINUX_SSH_USER";
+pub const ENV_LINUX_SSH_PWD: &str = "LINUX_SSH_PWD";
 
 pub fn set_node_override(node: Option<&str>) {
     if let Some(node) = node.filter(|v| !v.trim().is_empty()) {
         env::set_var(ENV_NODE, node);
     }
+}
+
+/// 读取面板所在主机的 SSH 凭据(仅 exec --sync-ssh 自动配置本地连接时使用)
+pub fn linux_ssh_creds() -> (Option<String>, Option<String>) {
+    (env_get(ENV_LINUX_SSH_USER), env_get(ENV_LINUX_SSH_PWD))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -30,6 +37,8 @@ pub struct ConfigOverrides {
     pub captcha_id: Option<String>,
     pub language: Option<String>,
     pub insecure: Option<bool>,
+    pub linux_ssh_user: Option<String>,
+    pub linux_ssh_pwd: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +52,11 @@ pub struct PanelConfig {
     pub captcha_id: Option<String>,
     pub language: String,
     pub insecure: bool,
+    // exec --sync-ssh 经由 linux_ssh_creds() 读取同名环境变量;字段保留以完整映射 .env 配置
+    #[allow(dead_code)]
+    pub linux_ssh_user: Option<String>,
+    #[allow(dead_code)]
+    pub linux_ssh_pwd: Option<String>,
 }
 
 fn env_get(key: &str) -> Option<String> {
@@ -165,6 +179,14 @@ impl PanelConfig {
                 .or_else(|| env_get(ENV_LANGUAGE))
                 .unwrap_or_else(|| "zh".to_string()),
             insecure,
+            linux_ssh_user: overrides
+                .linux_ssh_user
+                .clone()
+                .or_else(|| env_get(ENV_LINUX_SSH_USER)),
+            linux_ssh_pwd: overrides
+                .linux_ssh_pwd
+                .clone()
+                .or_else(|| env_get(ENV_LINUX_SSH_PWD)),
         })
     }
 }

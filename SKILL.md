@@ -28,6 +28,8 @@ metadata:
 
 把 `.env.example` 复制为 `.env`,至少填写 `PANEL_URL`、`PANEL_USERNAME`、`PANEL_PASSWORD`;启用安全入口时填写 `PANEL_ENTRANCE`。多节点面板可设置 `PANEL_NODE` 或传全局参数 `--node`。会话保存在 `~/.config/1panel-cli/<profile>.json`。
 
+`exec` 命令(面板本机执行命令)需要面板先配置「设置 → 终端 → SSH 本地连接」;可在 `.env` 中提供 `LINUX_SSH_USER` / `LINUX_SSH_PWD`,首次执行时加 `--sync-ssh` 自动写入。
+
 ## 操作流程
 
 任何面板操作前先执行:
@@ -98,6 +100,19 @@ metadata:
 1panel-cli firewall docker allow 8080 --sources 1.2.3.4 --desc web
 1panel-cli firewall docker deny 0.0.0.0:8080 --desc '对外关闭'
 
+# 在面板本机执行命令(前置:面板已配置「设置 → 终端 → SSH 本地连接」,
+# 或 .env 提供 LINUX_SSH_USER / LINUX_SSH_PWD 并加 --sync-ssh 自动配置)
+1panel-cli exec 'df -h && free -m'
+1panel-cli exec 'echo hello && hostname' --sync-ssh
+1panel-cli exec 'bash deploy.sh' --cwd /opt/myapp --timeout 300
+1panel-cli exec 'systemctl status docker' --timeout 10; echo "exit=$?"   # 退出码透传
+1panel-cli exec 'whoami' --json                                          # 脚本/AI 消费
+1panel-cli exec 'bash build.sh' --cwd /opt/app --tail 50                 # 超长输出只看结尾
+# 长任务用"无状态轮询",不要拉大 --timeout 硬等:
+1panel-cli exec 'nohup bash deploy.sh > /tmp/deploy.log 2>&1 &'
+1panel-cli exec 'tail -n 50 /tmp/deploy.log'
+1panel-cli exec 'pgrep -f deploy.sh'                                     # 退出码 0=还在跑
+
 # API 发现与调用
 1panel-cli api list --filter openclaw
 1panel-cli api describe POST ai/agents/plugins/search
@@ -117,3 +132,4 @@ metadata:
 6. nginx 配置保存后面板会 reload;写入前先读取原配置。生产密码与 Cookie 不应写入日志或提交仓库。
 7. Swagger 不是完整路由清单;以 `references/api-dev-v2.json` 的源码路由为准。企业版闭源扩展接口不在该清单内。
 8. `firewall docker` 与 `rules/check` 等新接口仅在新版面板存在;旧版面板会自动回退到旧防火墙接口,但无 Docker 端口守护。
+9. `exec` 仅支持单行命令,不能包含换行;输出默认清洗(剥离 ANSI/回显/提示符),`--raw` 保留原始流;交互式命令会挂到超时,长任务用轮询模式。
