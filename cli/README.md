@@ -1,19 +1,21 @@
-# 1Panel CLI
+# 1Panel CLI v0.3.0
 
 一个用 Rust 编写的命令行工具,用于登录已安装的 1Panel 面板 Web 服务,并把登录成功的会话凭据保存到本机,之后可用保存的凭据调用面板 API。
+
+验证基线为 1Panel dev-v2(下一版,统一防火墙 API);同时兼容 v2.2.5 及更早稳定版旧防火墙接口。请求自动发送 `authSource=local`、`Accept-Language` 与 `CurrentNode`。
 
 ## 功能
 
 - `login`  读取 `.env` 中的账号信息登录面板,自动完成 RSA+AES 密码加密、安全入口、验证码与 MFA 流程,并将会话凭据(psession / pcsrftoken / SecurityEntrance 等 Cookie)保存到本机
-- `status` 检查当前会话是否有效
+- `status` 检查当前会话并显示面板版本
 - `info`   查看已保存的会话信息(不展示 Cookie 明文)
 - `logout` 调用面板登出接口并清除本地保存的凭据
 - `apps`   应用商店操作:列出可安装应用、安装应用、查看应用详情(含数据库/Redis 连接信息)、修改配置与数据库密码
-- `db`    数据库操作:MySQL 数据库/用户增删改查、root 密码
+- `db`    数据库操作:MySQL/MariaDB 数据库/用户增删改查、root 密码
 - `redis` Redis 实例操作:状态/配置/密码(与 db 平级)
-- `firewall` 防火墙操作:状态、启停、Ping、端口/IP/转发规则增删查、批量放行
+- `firewall` 防火墙操作:状态、启停、Ping、端口/IP/转发规则增删查、批量放行;新版面板支持 Docker 端口守护(status/ports/sync/operate/allow/deny/policy-del)
 - `web`    网站(OpenResty/nginx)操作:网站列表、nginx 配置读写、HTTPS/SSL、文件上传与解压
-- `api`    使用已保存的凭据调用面板任意 API(GET/POST/PUT/DELETE,自动附带 CSRF Token)
+- `api`    发现官方源码路由、查看 Swagger 模型并调用 GET/POST/PUT/DELETE
 
 ## 构建
 
@@ -47,6 +49,9 @@ PANEL_PASSWORD=changeme
 
 # 可选:面板为 HTTPS 且使用自签名证书时设置为 true
 # PANEL_INSECURE=false
+
+# 可选:多节点面板目标节点(默认 local)
+# PANEL_NODE=local
 ```
 
 ## 使用示例
@@ -66,6 +71,10 @@ PANEL_PASSWORD=changeme
 1panel-cli status                      # 检查登录状态
 1panel-cli info                        # 查看会话信息
 1panel-cli api get core/auth/current   # 调用面板 API
+
+# API 发现(内置 dev-v2 源码清单 + 当前面板 Swagger)
+1panel-cli api list --filter templates
+1panel-cli api describe POST websites/templates/search
 
 # 环境检查(.env / 连通性 / 会话 / 登录,失败时给出修复指导)
 1panel-cli doctor                      # 快速检查
@@ -110,7 +119,8 @@ PANEL_PASSWORD=changeme
 
 # === 数据库管理 ===
 # MySQL 数据库
-1panel-cli db list                              # 列出数据库
+1panel-cli db list                              # 列出 MySQL 数据库
+1panel-cli db list --type mariadb --instance mariadb # 列出 MariaDB 数据库
 1panel-cli db create appdb --user app --password 'App@123' --remark '应用库'
 1panel-cli db delete appdb                      # 删除(被引用时报错,加 --force 强制)
 1panel-cli db users                             # 列出数据库用户
@@ -138,6 +148,13 @@ PANEL_PASSWORD=changeme
 1panel-cli firewall ip del 1.2.3.4
 1panel-cli firewall forward add 18080 --to 10.0.0.2:8080
 1panel-cli firewall forward del 18080 --to 10.0.0.2:8080 --num 1   # 编号用 list 查看
+
+# Docker 端口守护(新版统一防火墙 API,旧版面板不可用)
+1panel-cli firewall docker status                  # 守护状态
+1panel-cli firewall docker ports                   # 已发布端口与防护策略
+1panel-cli firewall docker allow 8080 --sources 1.2.3.4 --desc web   # 仅允许指定来源
+1panel-cli firewall docker deny 0.0.0.0:8080 --desc '对外关闭'        # 拒绝所有来源
+1panel-cli firewall docker policy-del --uuid <UUID>                  # 删除策略
 
 # 网站(OpenResty/nginx)管理
 # 列出所有网站/域名
@@ -188,7 +205,8 @@ PANEL_PASSWORD=changeme
 2. 生成 16 字节随机 AES 密钥(hex 字符串),用 RSA(PKCS1v15)加密该密钥字符串
 3. 用 AES-256-CBC(PKCS7)加密密码,最终提交 `keyCipher:iv:cipher` 格式的密码字段
 4. 通过 `EntranceCode` 请求头(base64 编码)携带安全入口
-5. 登录成功后保存 `psession`、`pcsrftoken`、`SecurityEntrance` 等 Cookie;后续 API 请求自动携带,写操作附带 `X-CSRF-Token`
+5. 所有请求附带 `Accept-Language` 和 URI 编码的 `CurrentNode`(默认 `local`)
+6. 登录成功后保存 `psession`、`pcsrftoken`、`SecurityEntrance` 等 Cookie;后续 API 请求自动携带,写操作附带 `X-CSRF-Token`
 
 ## 会话存储
 

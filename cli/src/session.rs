@@ -59,8 +59,8 @@ pub fn load_session(profile: &str) -> Result<Session> {
     let path = session_path(profile)?;
     let data = fs::read_to_string(&path)
         .with_context(|| format!("未找到已保存的会话: {}", path.display()))?;
-    let session: Session = serde_json::from_str(&data)
-        .with_context(|| format!("会话文件损坏: {}", path.display()))?;
+    let session: Session =
+        serde_json::from_str(&data).with_context(|| format!("会话文件损坏: {}", path.display()))?;
     Ok(session)
 }
 

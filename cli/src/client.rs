@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::blocking::{Client, Response};
 use reqwest::cookie::CookieStore;
 use reqwest::cookie::Jar;
-use reqwest::header::{HeaderValue, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_LANGUAGE, CONTENT_TYPE};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,11 +34,28 @@ impl PanelClient {
             .cookie_provider(jar.clone())
             .timeout(Duration::from_secs(30))
             .user_agent("1panel-cli");
+        let mut headers = HeaderMap::new();
+        let language = std::env::var(crate::config::ENV_LANGUAGE).unwrap_or_else(|_| "zh".into());
+        headers.insert(
+            ACCEPT_LANGUAGE,
+            HeaderValue::from_str(&language).map_err(|e| anyhow!("非法的 PANEL_LANGUAGE: {e}"))?,
+        );
+        let node = std::env::var(crate::config::ENV_NODE).unwrap_or_else(|_| "local".into());
+        let encoded_node = utf8_percent_encode(&node, NON_ALPHANUMERIC).to_string();
+        headers.insert(
+            HeaderName::from_static("currentnode"),
+            HeaderValue::from_str(&encoded_node).map_err(|e| anyhow!("非法的 PANEL_NODE: {e}"))?,
+        );
+        builder = builder.default_headers(headers);
         if insecure {
             builder = builder.danger_accept_invalid_certs(true);
         }
         let http = builder.build()?;
-        Ok(Self { base_url, http, jar })
+        Ok(Self {
+            base_url,
+            http,
+            jar,
+        })
     }
 
     pub fn url(&self, path: &str) -> String {
@@ -67,7 +85,10 @@ impl PanelClient {
     }
 
     pub fn cookie(&self, name: &str) -> Option<String> {
-        self.cookies().into_iter().find(|c| c.name == name).map(|c| c.value)
+        self.cookies()
+            .into_iter()
+            .find(|c| c.name == name)
+            .map(|c| c.value)
     }
 
     /// The RSA public key is served as the `panel_public_key` cookie, whose
@@ -104,7 +125,9 @@ impl PanelClient {
     /// Build a POST request without the CSRF header (used by the anonymous
     /// login endpoints).
     pub fn post_json_no_csrf(&self, path: &str) -> reqwest::blocking::RequestBuilder {
-        self.http.post(self.url(path)).header(CONTENT_TYPE, "application/json")
+        self.http
+            .post(self.url(path))
+            .header(CONTENT_TYPE, "application/json")
     }
 
     pub fn post(&self, path: &str) -> Result<Response> {

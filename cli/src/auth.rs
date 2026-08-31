@@ -118,6 +118,7 @@ pub fn login(cfg: &PanelConfig, profile: &str) -> Result<Session> {
         "captcha": captcha,
         "captchaID": captcha_id,
         "language": cfg.language,
+        "authSource": "local",
     });
 
     let resp = login_request(&client, "api/v2/core/auth/login", &body, &cfg.entrance)?;
@@ -139,7 +140,12 @@ pub fn login(cfg: &PanelConfig, profile: &str) -> Result<Session> {
             "sessionId": data.mfa_session,
             "code": code,
         });
-        login_request(&client, "api/v2/core/auth/mfalogin", &mfa_body, &cfg.entrance)?;
+        login_request(
+            &client,
+            "api/v2/core/auth/mfalogin",
+            &mfa_body,
+            &cfg.entrance,
+        )?;
     }
 
     let session = Session {
@@ -154,7 +160,10 @@ pub fn login(cfg: &PanelConfig, profile: &str) -> Result<Session> {
     };
     let path = save_session(&session)?;
 
-    println!("登录成功! 用户名: {} 面板: {}", session.username, session.panel_name);
+    println!(
+        "登录成功! 用户名: {} 面板: {}",
+        session.username, session.panel_name
+    );
     println!("会话凭据已保存到: {}", path.display());
     Ok(session)
 }
@@ -188,7 +197,11 @@ fn fetch_captcha(client: &PanelClient) -> Result<CaptchaResp> {
         .json()
         .map_err(|e| anyhow!("解析验证码响应失败: {e}"))?;
     if resp.code != 200 {
-        return Err(anyhow!("获取验证码失败 (code={}): {}", resp.code, resp.message));
+        return Err(anyhow!(
+            "获取验证码失败 (code={}): {}",
+            resp.code,
+            resp.message
+        ));
     }
     resp.data.ok_or_else(|| anyhow!("验证码响应缺少数据"))
 }
@@ -218,7 +231,10 @@ fn handle_captcha(client: &PanelClient, cfg: &PanelConfig) -> Result<(String, St
         .map_err(|e| anyhow!("解码验证码图片失败: {e}"))?;
     let img_path = std::env::temp_dir().join(format!("1panel-cli-captcha-{}.png", cap.captcha_id));
     std::fs::write(&img_path, &bytes)?;
-    println!("面板要求输入验证码。验证码图片已保存到: {}", img_path.display());
+    println!(
+        "面板要求输入验证码。验证码图片已保存到: {}",
+        img_path.display()
+    );
     println!("请打开图片,输入其中的算式结果(例如图片为 3+5=? 时输入 8)。");
     let ans = prompt("验证码答案: ")?;
     if ans.is_empty() {

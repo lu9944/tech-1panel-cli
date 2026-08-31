@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 mod apps;
 mod auth;
+mod catalog;
 mod client;
 mod commands;
 mod config;
@@ -30,8 +31,18 @@ struct Cli {
     env: Option<PathBuf>,
 
     /// 会话 profile 名称,可同时保存多个面板的登录凭据
-    #[arg(short, long, global = true, default_value = "default", value_name = "NAME")]
+    #[arg(
+        short,
+        long,
+        global = true,
+        default_value = "default",
+        value_name = "NAME"
+    )]
     profile: String,
+
+    /// 目标节点标识(多节点面板使用;默认 local,也可设置 PANEL_NODE)
+    #[arg(long, global = true, value_name = "NODE")]
+    node: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -113,6 +124,19 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ApiAction {
+    /// 列出 API 路由(合并内置 dev-v2 清单与当前面板 Swagger)
+    List {
+        /// 按路径、处理器、摘要或标签过滤
+        #[arg(long, default_value = "")]
+        filter: String,
+    },
+    /// 查看指定 API 的定义和请求模型
+    Describe {
+        /// HTTP 方法,如 GET / POST
+        method: String,
+        /// API 路径,可省略 /api/v2 前缀
+        path: String,
+    },
     /// GET 请求,如: get core/auth/current
     Get { path: String },
     /// POST 请求
@@ -308,6 +332,9 @@ enum DbAction {
         /// 类型: mysql / redis(默认 mysql)
         #[arg(long, default_value = "mysql")]
         r#type: String,
+        /// 数据库实例名(默认与 --type 相同)
+        #[arg(long)]
+        instance: Option<String>,
     },
     /// 创建数据库(MySQL)
     Create {
@@ -339,9 +366,12 @@ enum DbAction {
         /// 强制删除(忽略被引用资源)
         #[arg(long)]
         force: bool,
-        /// MySQL 实例名(默认 mysql)
+        /// 数据库类型: mysql / mariadb
         #[arg(long, default_value = "mysql")]
-        instance: String,
+        r#type: String,
+        /// 数据库实例名(默认与 --type 相同)
+        #[arg(long)]
+        instance: Option<String>,
     },
     /// 列出数据库用户
     Users {
@@ -431,6 +461,11 @@ enum FirewallAction {
         #[command(subcommand)]
         action: ForwardAction,
     },
+    /// Docker 端口守护(新版统一防火墙 API)
+    Docker {
+        #[command(subcommand)]
+        action: DockerAction,
+    },
     /// 批量添加端口放行
     Batch {
         /// 添加多个端口,逗号分隔,如 8080,9090
@@ -447,6 +482,56 @@ enum FirewallAction {
         /// 备注
         #[arg(long, default_value = "")]
         desc: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DockerAction {
+    /// 查看 Docker 端口守护状态(后端/绑定/初始化)
+    Status,
+    /// 列出 Docker 已发布端口与防护策略
+    Ports,
+    /// 同步 Docker 端口防护规则
+    Sync,
+    /// 初始化/绑定/解绑 Docker 端口守护
+    Operate {
+        /// 操作: init / bind / unbind(默认 init)
+        #[arg(long, default_value = "init")]
+        operation: String,
+    },
+    /// 放行已发布端口(仅允许指定来源访问)
+    Allow {
+        /// 宿主端口,如 8080 或 0.0.0.0:8080
+        port: String,
+        /// 协议: tcp / udp / tcp/udp(默认 tcp)
+        #[arg(long, default_value = "tcp")]
+        protocol: String,
+        /// 允许访问的来源 IP(逗号分隔,必填)
+        #[arg(long, default_value = "")]
+        sources: String,
+        /// 备注
+        #[arg(long, default_value = "")]
+        desc: String,
+    },
+    /// 拒绝指定来源访问已发布端口(不带 --sources 时拒绝所有来源)
+    Deny {
+        /// 宿主端口,如 8080 或 0.0.0.0:8080
+        port: String,
+        /// 协议: tcp / udp / tcp/udp(默认 tcp)
+        #[arg(long, default_value = "tcp")]
+        protocol: String,
+        /// 拒绝访问的来源 IP(逗号分隔;为空则拒绝所有来源)
+        #[arg(long, default_value = "")]
+        sources: String,
+        /// 备注
+        #[arg(long, default_value = "")]
+        desc: String,
+    },
+    /// 删除 Docker 端口守护策略
+    PolicyDel {
+        /// 策略 UUID(firewall docker ports 中查看)
+        #[arg(long)]
+        uuid: String,
     },
 }
 
@@ -599,6 +684,7 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     config::load_env_file(cli.env.as_deref())?;
+    config::set_node_override(cli.node.as_deref());
 
     match cli.command {
         Commands::Login {
@@ -629,7 +715,13 @@ fn main() -> Result<()> {
         Commands::Info => commands::info(&cli.profile)?,
         Commands::Logout => commands::logout(&cli.profile)?,
         Commands::Api { action } => match action {
-            ApiAction::Get { path } => commands::api_call(&cli.profile, ApiMethod::Get, &path, None)?,
+            ApiAction::List { filter } => catalog::list(&cli.profile, &filter)?,
+            ApiAction::Describe { method, path } => {
+                catalog::describe(&cli.profile, &method, &path)?
+            }
+            ApiAction::Get { path } => {
+                commands::api_call(&cli.profile, ApiMethod::Get, &path, None)?
+            }
             ApiAction::Post { path, body } => {
                 commands::api_call(&cli.profile, ApiMethod::Post, &path, body.as_deref())?
             }
@@ -664,12 +756,13 @@ fn main() -> Result<()> {
             AppsAction::Tags => apps::tags(&cli.profile)?,
             AppsAction::Info { name } => apps::info(&cli.profile, &name)?,
             AppsAction::Config { name, set, compose } => {
-                let opts = apps::ConfigOptions { set, show_compose: compose };
+                let opts = apps::ConfigOptions {
+                    set,
+                    show_compose: compose,
+                };
                 apps::config(&cli.profile, &name, &opts)?;
             }
-            AppsAction::Password { name, value } => {
-                apps::password(&cli.profile, &name, &value)?
-            }
+            AppsAction::Password { name, value } => apps::password(&cli.profile, &name, &value)?,
             AppsAction::Install {
                 name,
                 version,
@@ -694,7 +787,11 @@ fn main() -> Result<()> {
                 alias,
                 remark,
             } => {
-                let opts = web::CreateOptions { r#type, alias, remark };
+                let opts = web::CreateOptions {
+                    r#type,
+                    alias,
+                    remark,
+                };
                 web::create(&cli.profile, &domain, &opts)?;
             }
             WebAction::Config { domain, file } => {
@@ -751,7 +848,9 @@ fn main() -> Result<()> {
             } => web::extract(&cli.profile, &domain, &archive, &to, &r#type)?,
         },
         Commands::Db { action } => match action {
-            DbAction::List { r#type } => db::list(&cli.profile, &r#type)?,
+            DbAction::List { r#type, instance } => {
+                db::list(&cli.profile, &r#type, instance.as_deref())?
+            }
             DbAction::Create {
                 name,
                 user,
@@ -771,8 +870,17 @@ fn main() -> Result<()> {
                 };
                 db::create(&cli.profile, &name, &opts)?;
             }
-            DbAction::Delete { name, force, instance } => {
-                let opts = db::DeleteOptions { instance, force };
+            DbAction::Delete {
+                name,
+                force,
+                r#type,
+                instance,
+            } => {
+                let opts = db::DeleteOptions {
+                    instance: instance.unwrap_or_else(|| r#type.clone()),
+                    db_type: r#type,
+                    force,
+                };
                 db::delete(&cli.profile, &name, &opts)?;
             }
             DbAction::Users { instance } => db::users(&cli.profile, &instance)?,
@@ -797,7 +905,11 @@ fn main() -> Result<()> {
                     };
                     db::user_add(&cli.profile, &username, &password, &opts)?;
                 }
-                DbUserAction::Del { username, host, instance } => {
+                DbUserAction::Del {
+                    username,
+                    host,
+                    instance,
+                } => {
                     let opts = db::UserOptions {
                         instance,
                         host,
@@ -843,8 +955,16 @@ fn main() -> Result<()> {
             FirewallAction::Restart => firewall::operate(&cli.profile, "restart")?,
             FirewallAction::AllowPing => firewall::operate(&cli.profile, "allow-ping")?,
             FirewallAction::BanPing => firewall::operate(&cli.profile, "ban-ping")?,
-            FirewallAction::List { r#type, info, strategy } => {
-                let opts = firewall::ListOptions { r#type, info, strategy };
+            FirewallAction::List {
+                r#type,
+                info,
+                strategy,
+            } => {
+                let opts = firewall::ListOptions {
+                    r#type,
+                    info,
+                    strategy,
+                };
                 firewall::list(&cli.profile, &opts)?;
             }
             FirewallAction::Port { action } => match action {
@@ -855,10 +975,20 @@ fn main() -> Result<()> {
                     source,
                     desc,
                 } => {
-                    let opts = firewall::PortOptions { protocol, strategy, source, desc };
+                    let opts = firewall::PortOptions {
+                        protocol,
+                        strategy,
+                        source,
+                        desc,
+                    };
                     firewall::port_add(&cli.profile, &port, &opts)?;
                 }
-                PortAction::Del { port, protocol, strategy, source } => {
+                PortAction::Del {
+                    port,
+                    protocol,
+                    strategy,
+                    source,
+                } => {
                     let opts = firewall::PortOptions {
                         protocol,
                         strategy,
@@ -869,17 +999,29 @@ fn main() -> Result<()> {
                 }
             },
             FirewallAction::Ip { action } => match action {
-                IpAction::Add { address, strategy, desc } => {
+                IpAction::Add {
+                    address,
+                    strategy,
+                    desc,
+                } => {
                     let opts = firewall::IpOptions { strategy, desc };
                     firewall::ip_add(&cli.profile, &address, &opts)?;
                 }
                 IpAction::Del { address, strategy } => {
-                    let opts = firewall::IpOptions { strategy, desc: String::new() };
+                    let opts = firewall::IpOptions {
+                        strategy,
+                        desc: String::new(),
+                    };
                     firewall::ip_del(&cli.profile, &address, &opts)?;
                 }
             },
             FirewallAction::Forward { action } => match action {
-                ForwardAction::Add { port, to, protocol, interface } => {
+                ForwardAction::Add {
+                    port,
+                    to,
+                    protocol,
+                    interface,
+                } => {
                     let opts = firewall::ForwardOptions {
                         protocol,
                         target: to,
@@ -888,7 +1030,13 @@ fn main() -> Result<()> {
                     };
                     firewall::forward_add(&cli.profile, &port, &opts)?;
                 }
-                ForwardAction::Del { port, to, protocol, interface, num } => {
+                ForwardAction::Del {
+                    port,
+                    to,
+                    protocol,
+                    interface,
+                    num,
+                } => {
                     let opts = firewall::ForwardOptions {
                         protocol,
                         target: to,
@@ -898,6 +1046,43 @@ fn main() -> Result<()> {
                     firewall::forward_del(&cli.profile, &port, &opts)?;
                 }
             },
+            FirewallAction::Docker { action } => match action {
+                DockerAction::Status => firewall::docker_status(&cli.profile)?,
+                DockerAction::Ports => firewall::docker_ports(&cli.profile)?,
+                DockerAction::Sync => firewall::docker_sync(&cli.profile)?,
+                DockerAction::Operate { operation } => {
+                    firewall::docker_operate(&cli.profile, &operation)?
+                }
+                DockerAction::Allow {
+                    port,
+                    protocol,
+                    sources,
+                    desc,
+                } => firewall::docker_apply(
+                    &cli.profile,
+                    &port,
+                    &protocol,
+                    &sources,
+                    &desc,
+                    "allow_sources",
+                )?,
+                DockerAction::Deny {
+                    port,
+                    protocol,
+                    sources,
+                    desc,
+                } => {
+                    let mode = if sources.trim().is_empty() {
+                        "deny_all"
+                    } else {
+                        "deny_sources"
+                    };
+                    firewall::docker_apply(&cli.profile, &port, &protocol, &sources, &desc, mode)?;
+                }
+                DockerAction::PolicyDel { uuid } => {
+                    firewall::docker_policy_del(&cli.profile, &uuid)?
+                }
+            },
             FirewallAction::Batch {
                 ports,
                 protocol,
@@ -905,7 +1090,12 @@ fn main() -> Result<()> {
                 source,
                 desc,
             } => {
-                let opts = firewall::PortOptions { protocol, strategy, source, desc };
+                let opts = firewall::PortOptions {
+                    protocol,
+                    strategy,
+                    source,
+                    desc,
+                };
                 firewall::batch_add(&cli.profile, &ports, &opts)?;
             }
         },

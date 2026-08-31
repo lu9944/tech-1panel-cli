@@ -11,6 +11,13 @@ pub const ENV_CAPTCHA: &str = "PANEL_CAPTCHA";
 pub const ENV_CAPTCHA_ID: &str = "PANEL_CAPTCHA_ID";
 pub const ENV_LANGUAGE: &str = "PANEL_LANGUAGE";
 pub const ENV_INSECURE: &str = "PANEL_INSECURE";
+pub const ENV_NODE: &str = "PANEL_NODE";
+
+pub fn set_node_override(node: Option<&str>) {
+    if let Some(node) = node.filter(|v| !v.trim().is_empty()) {
+        env::set_var(ENV_NODE, node);
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct ConfigOverrides {
@@ -43,7 +50,12 @@ fn env_get(key: &str) -> Option<String> {
 }
 
 fn env_flag(key: &str) -> Option<bool> {
-    env_get(key).map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+    env_get(key).map(|v| {
+        matches!(
+            v.trim().to_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 /// Load .env file into the process environment (does not override existing vars).
@@ -141,14 +153,8 @@ impl PanelConfig {
             entrance,
             username,
             password,
-            mfa_code: overrides
-                .mfa_code
-                .clone()
-                .or_else(|| env_get(ENV_MFA)),
-            captcha: overrides
-                .captcha
-                .clone()
-                .or_else(|| env_get(ENV_CAPTCHA)),
+            mfa_code: overrides.mfa_code.clone().or_else(|| env_get(ENV_MFA)),
+            captcha: overrides.captcha.clone().or_else(|| env_get(ENV_CAPTCHA)),
             captcha_id: overrides
                 .captcha_id
                 .clone()

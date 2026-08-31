@@ -129,7 +129,10 @@ pub fn list(profile: &str) -> Result<()> {
     }
     let w = |i: usize| rows.iter().map(|r| r[i].chars().count()).max().unwrap_or(0);
     let (wd, wt, ws, wh, wp) = (w(0), w(1), w(2), w(3), w(4));
-    println!("{:<wd$}  {:<wt$}  {:<ws$}  {:<wh$}  {:<wp$}", "域名", "类型", "状态", "HTTPS", "网站目录");
+    println!(
+        "{:<wd$}  {:<wt$}  {:<ws$}  {:<wh$}  {:<wp$}",
+        "域名", "类型", "状态", "HTTPS", "网站目录"
+    );
     println!(
         "{}",
         [wd, wt, ws, wh, wp]
@@ -139,7 +142,10 @@ pub fn list(profile: &str) -> Result<()> {
             .join("+")
     );
     for r in &rows {
-        println!("{:<wd$}  {:<wt$}  {:<ws$}  {:<wh$}  {:<wp$}", r[0], r[1], r[2], r[3], r[4]);
+        println!(
+            "{:<wd$}  {:<wt$}  {:<ws$}  {:<wh$}  {:<wp$}",
+            r[0], r[1], r[2], r[3], r[4]
+        );
     }
     println!("共 {total} 个网站");
     Ok(())
@@ -155,8 +161,7 @@ pub fn config(profile: &str, domain: &str, opts: &ConfigOptions) -> Result<()> {
     let website = get_website(&client, domain)?;
 
     if let Some(file) = &opts.file {
-        let content =
-            fs::read_to_string(file).map_err(|e| anyhow!("读取文件失败 {file}: {e}"))?;
+        let content = fs::read_to_string(file).map_err(|e| anyhow!("读取文件失败 {file}: {e}"))?;
         let body = json!({"id": website.id, "content": content});
         let resp: Value = client
             .post_json("api/v2/websites/nginx/update", &body)?
@@ -199,9 +204,15 @@ pub fn https(profile: &str, domain: &str, opts: &HttpsOptions) -> Result<()> {
         check_code(&resp)?;
         let st: HttpsStatus = serde_json::from_value(resp["data"].clone())
             .map_err(|e| anyhow!("解析 https 配置失败: {e}"))?;
-        println!("{domain} HTTPS: {}", if st.enable { "已开启" } else { "未开启" });
+        println!(
+            "{domain} HTTPS: {}",
+            if st.enable { "已开启" } else { "未开启" }
+        );
         if let Some(ssl) = &st.ssl {
-            println!("证书 id: {} ({}，状态: {})", ssl.id, ssl.primary_domain, ssl.status);
+            println!(
+                "证书 id: {} ({}，状态: {})",
+                ssl.id, ssl.primary_domain, ssl.status
+            );
             println!("到期: {}", ssl.expire_date);
         }
         println!("HTTP 跳转: {}", st.http_config);
@@ -242,10 +253,7 @@ pub fn https(profile: &str, domain: &str, opts: &HttpsOptions) -> Result<()> {
         .json()
         .map_err(|e| anyhow!("更新 https 配置失败: {e}"))?;
     check_code(&resp)?;
-    println!(
-        "{domain} HTTPS 已{}",
-        if enable { "开启" } else { "关闭" }
-    );
+    println!("{domain} HTTPS 已{}", if enable { "开启" } else { "关闭" });
     Ok(())
 }
 
@@ -286,7 +294,10 @@ pub fn ssl(profile: &str, domain: &str, opts: &SslOptions) -> Result<()> {
         .json()
         .map_err(|e| anyhow!("申请证书失败: {e}"))?;
     check_code(&resp)?;
-    println!("证书申请任务已提交(provider: {}, 可能需要几分钟)", opts.provider);
+    println!(
+        "证书申请任务已提交(provider: {}, 可能需要几分钟)",
+        opts.provider
+    );
     println!("申请完成后运行以下命令启用 HTTPS:");
     println!("  1panel-cli web https {domain} --enable --ssl-id {ssl_id}");
     Ok(())
@@ -346,7 +357,10 @@ pub fn upload(profile: &str, domain: &str, file: &str, to: &str) -> Result<()> {
             v["message"].as_str().unwrap_or(&text)
         ));
     }
-    println!("已上传 {} 到 {dest}", local.file_name().unwrap_or_default().to_string_lossy());
+    println!(
+        "已上传 {} 到 {dest}",
+        local.file_name().unwrap_or_default().to_string_lossy()
+    );
     Ok(())
 }
 
@@ -378,9 +392,7 @@ pub fn extract(
         "dst": dst,
         "type": ctype,
         "secret": "",
-        "taskID": format!("{:x}-{:x}-4{:03}-8{:03}-{:012x}",
-            rand::random::<u32>(), rand::random::<u16>(), rand::random::<u16>() & 0xfff,
-            rand::random::<u16>() & 0xfff, rand::random::<u64>()),
+        "taskID": new_uuid(),
     });
     let resp: Value = client
         .post_json("api/v2/files/decompress", &body)?
@@ -424,7 +436,9 @@ fn detect_archive_type(name: &str) -> Result<String> {
     } else if lower.ends_with(".rar") {
         Ok("rar".to_string())
     } else {
-        Err(anyhow!("无法从文件名识别压缩类型,请用 --type 指定(zip / tar.gz / tar / gz ...)"))
+        Err(anyhow!(
+            "无法从文件名识别压缩类型,请用 --type 指定(zip / tar.gz / tar / gz ...)"
+        ))
     }
 }
 
@@ -457,7 +471,10 @@ fn find_openresty_install(client: &PanelClient) -> Result<u64> {
         .json()
         .map_err(|e| anyhow!("查询 openresty 安装信息失败: {e}"))?;
     check_code(&resp)?;
-    let items = resp["data"]["items"].as_array().cloned().unwrap_or_default();
+    let items = resp["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     for it in &items {
         if it["appKey"].as_str() == Some("openresty") {
             return it["id"]
@@ -465,7 +482,9 @@ fn find_openresty_install(client: &PanelClient) -> Result<u64> {
                 .ok_or_else(|| anyhow!("解析 openresty 安装 ID 失败"));
         }
     }
-    Err(anyhow!("未找到已安装的 openresty,请先运行 apps install openresty"))
+    Err(anyhow!(
+        "未找到已安装的 openresty,请先运行 apps install openresty"
+    ))
 }
 
 fn find_default_website_group(client: &PanelClient) -> Result<u64> {
@@ -484,9 +503,7 @@ fn find_default_website_group(client: &PanelClient) -> Result<u64> {
         }
     }
     if let Some(g) = groups.first() {
-        return g["id"]
-            .as_u64()
-            .ok_or_else(|| anyhow!("解析分组 ID 失败"));
+        return g["id"].as_u64().ok_or_else(|| anyhow!("解析分组 ID 失败"));
     }
     Err(anyhow!("面板没有可用的网站分组"))
 }
@@ -500,13 +517,7 @@ pub fn create(profile: &str, domain: &str, opts: &CreateOptions) -> Result<()> {
     let alias = opts
         .alias
         .clone()
-        .unwrap_or_else(|| {
-            domain
-                .split('.')
-                .next()
-                .unwrap_or("site")
-                .to_string()
-        });
+        .unwrap_or_else(|| domain.split('.').next().unwrap_or("site").to_string());
 
     let body = json!({
         "primaryDomain": domain,
@@ -514,8 +525,8 @@ pub fn create(profile: &str, domain: &str, opts: &CreateOptions) -> Result<()> {
         "alias": alias,
         "remark": opts.remark.clone().unwrap_or_default(),
         "appType": "installed",
-        "appInstallId": openresty_id,
-        "webSiteGroupId": group_id,
+        "appInstallID": openresty_id,
+        "webSiteGroupID": group_id,
         "domains": [{"domain": domain, "port": 80, "ssl": false}],
         "taskID": new_uuid(),
         "IPV6": false,
@@ -526,6 +537,6 @@ pub fn create(profile: &str, domain: &str, opts: &CreateOptions) -> Result<()> {
         .map_err(|e| anyhow!("解析创建网站响应失败: {e}"))?;
     check_code(&resp)?;
     println!("网站已创建: {domain} (alias={alias}, 类型={})", opts.r#type);
-    println!("网站目录: /opt/1panel/www/sites/{alias}");
+    println!("可运行 `1panel-cli web list` 查看面板实际网站目录");
     Ok(())
 }

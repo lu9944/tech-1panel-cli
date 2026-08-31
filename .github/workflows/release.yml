@@ -25,18 +25,33 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            arch: x86_64
+            arch: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            bin: 1panel-cli
             artifact: 1panel-skill
           - os: ubuntu-24.04-arm
-            arch: aarch64
+            arch: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            bin: 1panel-cli
             artifact: 1panel-skill-aarch64
+          - os: ubuntu-latest
+            arch: windows-x86_64
+            target: x86_64-pc-windows-gnu
+            bin: 1panel-cli.exe
+            artifact: 1panel-skill-windows
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Windows cross-compile toolchain (mingw-w64)
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -44,24 +59,25 @@ jobs:
           path: |
             ~/.cargo/registry
             cli/target
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('cli/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('cli/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-cargo-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
 
       - name: Build 1panel-cli (release)
         working-directory: cli
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Assemble 1panel-skill.zip
         run: |
           set -euxo pipefail
           STAGE="1panel-skill"
           rm -rf "$STAGE" "${{ matrix.artifact }}.zip"
-          mkdir -p "$STAGE/bin"
+          mkdir -p "$STAGE/bin" "$STAGE/references"
           cp SKILL.md commands.md README.md .env.example "$STAGE/"
-          cp cli/target/release/1panel-cli "$STAGE/bin/"
+          cp cli/target/${{ matrix.target }}/release/${{ matrix.bin }} "$STAGE/bin/${{ matrix.bin }}"
           cp .env.example "$STAGE/bin/.env.example"
-          chmod +x "$STAGE/bin/1panel-cli"
+          cp references/compatibility-dev-v2.md references/api-dev-v2.json "$STAGE/references/"
+          chmod +x "$STAGE/bin/${{ matrix.bin }}"
           python3 - <<'PYEOF'
           import os, zipfile
           src, out = "1panel-skill", "${{ matrix.artifact }}.zip"
@@ -77,7 +93,9 @@ jobs:
                   "1panel-skill/SKILL.md",
                   "1panel-skill/.env.example",
                   "1panel-skill/bin/.env.example",
-                  "1panel-skill/bin/1panel-cli",
+                  "1panel-skill/bin/${{ matrix.bin }}",
+                  "1panel-skill/references/compatibility-dev-v2.md",
+                  "1panel-skill/references/api-dev-v2.json",
               }
               missing = required - names
               if missing:
@@ -127,6 +145,7 @@ jobs:
 
             - `1panel-skill.zip` — Linux x86_64
             - `1panel-skill-aarch64.zip` — Linux aarch64
+            - `1panel-skill-windows.zip` — Windows x86_64
 
             解压后目录结构:
             ```
@@ -135,9 +154,12 @@ jobs:
             ├── commands.md    # 命令速查表
             ├── README.md
             ├── .env.example   # 面板账号配置模板(复制为 .env 并填写)
+            ├── references/   # dev-v2 兼容性报告与源码 API 清单
             └── bin/
                 └── 1panel-cli # 可执行文件
             ```
+
+            本版验证基线:1Panel dev-v2(统一防火墙 API + Docker 端口守护);兼容 v2.2.5 旧防火墙接口。
 
             首次使用: 编辑 `.env` 填入 PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD,运行 `./bin/1panel-cli doctor` 检查环境。
           files: dist/*.zip

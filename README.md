@@ -1,6 +1,8 @@
-# tech-1panel-cli — 1Panel 面板管理 Skill + CLI
+# tech-1panel-cli v0.3.0 — 1Panel v2 面板管理 Skill + CLI
 
 通过命令行工具 `1panel-cli` 管理 [1Panel](https://1panel.cn) 面板。所有操作均通过面板官方 API 完成,效果与面板管理页面一致。
+
+当前验证基线为 **1Panel dev-v2**(下一版,统一防火墙 API + Docker 端口守护),同时兼容 **v2.2.5** 及更早稳定版旧防火墙接口。详细审计见 [`references/compatibility-dev-v2.md`](references/compatibility-dev-v2.md)。
 
 项目同时提供:
 
@@ -12,11 +14,11 @@
 
 - **会话**:`login / status / info / logout / doctor`,自动完成 RSA+AES 密码加密、安全入口、验证码与 MFA;登录一次后会话凭据保存在本机(`~/.config/1panel-cli/<profile>.json`,权限 0600),无需重复登录
 - **应用商店 `apps`**:列出/安装应用、查看应用详情(含数据库与 Redis 连接信息)、修改配置参数与数据库 root 密码
-- **数据库 `db`**:MySQL 数据库/用户增删改查、root 密码
+- **数据库 `db`**:MySQL/MariaDB 数据库/用户增删改查、root 密码
 - **Redis `redis`**:实例状态/配置读写/密码
 - **网站 `web`**:网站列表、nginx 配置读写(保存后自动 reload)、HTTPS/SSL 证书、文件上传与解压
-- **防火墙 `firewall`**:状态/启停/Ping、端口/IP/转发规则增删查、批量放行
-- **任意 API `api`**:使用已保存的凭据调用面板任意 API(GET/POST/PUT/DELETE,自动携带 Cookie 与 CSRF Token)
+- **防火墙 `firewall`**:自动适配新版统一规则接口与 v2.2.5 旧接口,支持状态/启停/Ping、端口/IP/转发规则增删查、批量放行;新版面板额外支持 Docker 端口守护(`firewall docker` 状态/列表/同步/放行/拒绝)
+- **API `api`**:从官方源码生成 766 条路由目录,可 list/describe 并调用 GET/POST/PUT/DELETE,自动携带 Cookie、CSRF、语言和节点头
 
 ## 安装
 
@@ -41,7 +43,7 @@ cargo build --release --locked
 # 产物: cli/target/release/1panel-cli
 ```
 
-### 作为 Skill 安装(opencoe / Claude Code)
+### 作为 Skill 安装(opencode / Claude Code)
 
 将解压后的 `SKILL.md` 所在目录放入 skill 路径,例如:
 
@@ -85,6 +87,7 @@ cp -r 1panel-skill ~/.config/opencode/skills/1panel-cli
    1panel-cli web list                  # 列出网站/域名
    1panel-cli firewall status           # 防火墙状态
    1panel-cli api get core/auth/current # 调用面板任意 API
+   1panel-cli api list --filter templates # 发现源码注册的 API
    ```
 
 完整命令速查见同目录 `commands.md`,CLI 详细用法与示例见 `cli/README.md`。
@@ -97,6 +100,8 @@ cp -r 1panel-skill ~/.config/opencode/skills/1panel-cli
 | `PANEL_USERNAME` | 是 | 面板登录用户名 |
 | `PANEL_PASSWORD` | 是 | 面板登录密码 |
 | `PANEL_ENTRANCE` | 否 | 安全入口(也可从 `PANEL_URL` 路径自动识别) |
+| `PANEL_LANGUAGE` | 否 | 请求语言,默认 `zh` |
+| `PANEL_NODE` | 否 | 多节点目标节点,默认 `local`;也可用 `--node` |
 | `PANEL_MFA_CODE` | 否 | 开启 MFA 时的动态验证码(自动化场景) |
 | `PANEL_CAPTCHA` / `PANEL_CAPTCHA_ID` | 否 | 登录验证码答案与 ID(配合外部 OCR 自动化) |
 | `PANEL_INSECURE` | 否 | 面板为 HTTPS 且使用自签名证书时设为 `true` |
@@ -116,6 +121,8 @@ tech-1panel-cli/
 ├── SKILL.md               # 技能主体(触发条件、环境检查、命令速查、关键约定)
 ├── commands.md            # 完整命令速查表(会话 / apps / db / redis / web / firewall / api)
 ├── .env.example           # 面板账号配置模板
+├── references/            # dev-v2 API 清单与兼容性审计
+├── scripts/               # API 清单生成器
 ├── cli/                   # 1panel-cli Rust 源码
 │   ├── src/               #   源码模块
 │   ├── Cargo.toml
@@ -136,6 +143,9 @@ GitHub Actions(打 `v*` tag 或手动触发)会构建 Linux x86_64 / aarch64 两
     ├── commands.md
     ├── README.md
     ├── .env.example       # 面板账号配置模板(根目录副本)
+    ├── references/
+    │   ├── compatibility-dev-v2.md
+    │   └── api-dev-v2.json
     └── bin/
         ├── .env.example   # 配置模板(复制为 .env 并填写,与二进制同目录)
         └── 1panel-cli     # 可执行文件

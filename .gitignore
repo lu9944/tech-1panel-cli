@@ -4,3 +4,5 @@ cli/target/
 .env
 # 打包产物
 *.zip
+# Python 缓存
+__pycache__/

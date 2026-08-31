@@ -28,6 +28,9 @@ pub fn status(profile: &str) -> Result<()> {
             format!("{} ({})", session.panel_name, session.panel_url)
         };
         println!("已登录: {name} 角色: {role} 面板: {panel}");
+        if let Ok((version, edition)) = panel_version(profile) {
+            println!("面板版本: {version} ({edition})");
+        }
         Ok(())
     } else {
         println!(
@@ -37,6 +40,32 @@ pub fn status(profile: &str) -> Result<()> {
         println!("请重新运行 login 命令登录。");
         Ok(())
     }
+}
+
+pub fn panel_version(profile: &str) -> Result<(String, String)> {
+    let session = load_session(profile)?;
+    let client = PanelClient::new(&session.panel_url, Some(&session.cookies), session.insecure)?;
+    let resp: Value = client
+        .post("api/v2/core/settings/search/base")?
+        .json()
+        .map_err(|e| anyhow!("解析面板版本响应失败: {e}"))?;
+    if resp["code"].as_i64() != Some(200) {
+        return Err(anyhow!(
+            "查询面板版本失败 (code={}): {}",
+            resp["code"].as_i64().unwrap_or(-1),
+            resp["message"].as_str().unwrap_or("")
+        ));
+    }
+    Ok((
+        resp["data"]["systemVersion"]
+            .as_str()
+            .unwrap_or("未知")
+            .to_string(),
+        resp["data"]["edition"]
+            .as_str()
+            .unwrap_or("未知")
+            .to_string(),
+    ))
 }
 
 pub fn info(profile: &str) -> Result<()> {
@@ -56,7 +85,10 @@ pub fn info(profile: &str) -> Result<()> {
     println!("登录时间    : {}", session.logged_in_at);
     let names: Vec<&str> = session.cookies.iter().map(|c| c.name.as_str()).collect();
     println!("凭据 cookies: {} (值已隐藏)", names.join(", "));
-    println!("凭据文件    : {}", crate::session::session_path(profile)?.display());
+    println!(
+        "凭据文件    : {}",
+        crate::session::session_path(profile)?.display()
+    );
     Ok(())
 }
 
@@ -91,7 +123,11 @@ pub fn api_call(profile: &str, method: ApiMethod, path: &str, body: Option<&str>
     if std::env::var("PANEL_CLI_DEBUG").is_ok() {
         eprintln!("[debug] {method:?} {full} -> {status}");
         for c in client.cookies() {
-            eprintln!("[debug] cookie {}={}", c.name, c.value.chars().take(12).collect::<String>());
+            eprintln!(
+                "[debug] cookie {}={}",
+                c.name,
+                c.value.chars().take(12).collect::<String>()
+            );
         }
     }
     let text = resp.text().unwrap_or_default();

@@ -18,7 +18,7 @@ fn guidance(lines: &[&str]) {
 }
 
 pub fn doctor(profile: &str, force: bool) -> Result<()> {
-    let total = 5;
+    let total = 6;
     let mut all_ok = true;
 
     println!("1Panel CLI 环境检查 (profile: {profile})\n");
@@ -46,7 +46,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
     let cfg = match PanelConfig::from_env(&ConfigOverrides::default()) {
         Ok(c) => Some(c),
         Err(e) => {
-            println!("[2/5] 配置项 ... 失败 ({e})");
+            println!("[2/6] 配置项 ... 失败 ({e})");
             guidance(&[
                 "缺少环境变量: PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD",
                 "在 .env 中添加,例如:",
@@ -65,7 +65,11 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         "URL={}, USER={}, ENTRANCE={}",
         cfg.url,
         cfg.username,
-        if cfg.entrance.is_empty() { "(无)" } else { &cfg.entrance }
+        if cfg.entrance.is_empty() {
+            "(无)"
+        } else {
+            &cfg.entrance
+        }
     );
     let ok2 = !cfg.url.is_empty() && !cfg.username.is_empty() && !cfg.password.is_empty();
     step(2, total, "配置项", ok2, &detail2);
@@ -77,7 +81,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
     let client = match PanelClient::new(&cfg.url, None, cfg.insecure) {
         Ok(c) => c,
         Err(e) => {
-            println!("[3/5] 面板地址 ... 失败 ({e})");
+            println!("[3/6] 面板地址 ... 失败 ({e})");
             return Ok(());
         }
     };
@@ -103,7 +107,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
             }
         }
         Err(e) => {
-            println!("[3/5] 面板地址 ... 失败 ({e})");
+            println!("[3/6] 面板地址 ... 失败 ({e})");
             all_ok = false;
             guidance(&[
                 "无法连接面板地址,请检查:",
@@ -120,7 +124,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         Some(s) => {
             if s.panel_url != cfg.url {
                 println!(
-                    "[4/5] 已保存会话 ... 失败 (会话地址 {} 与配置地址 {} 不一致)",
+                    "[4/6] 已保存会话 ... 失败 (会话地址 {} 与配置地址 {} 不一致)",
                     s.panel_url, cfg.url
                 );
                 all_ok = false;
@@ -132,7 +136,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
                 let sclient = match PanelClient::new(&s.panel_url, Some(&s.cookies), s.insecure) {
                     Ok(c) => c,
                     Err(_) => {
-                        println!("[4/5] 已保存会话 ... 失败 (凭据解析失败)");
+                        println!("[4/6] 已保存会话 ... 失败 (凭据解析失败)");
                         return Ok(());
                     }
                 };
@@ -154,20 +158,18 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
                         step(4, total, "已保存会话", ok4, &format!("用户名 {detail4}"));
                         if !ok4 {
                             all_ok = false;
-                            guidance(&[
-                                "会话已过期或被服务器注销,将尝试重新登录(见下一步)。",
-                            ]);
+                            guidance(&["会话已过期或被服务器注销,将尝试重新登录(见下一步)。"]);
                         }
                     }
                     Err(e) => {
-                        println!("[4/5] 已保存会话 ... 失败 ({e})");
+                        println!("[4/6] 已保存会话 ... 失败 ({e})");
                         all_ok = false;
                     }
                 }
             }
         }
         None => {
-            println!("[4/5] 已保存会话 ... 跳过 (尚未登录,将直接登录)");
+            println!("[4/6] 已保存会话 ... 跳过 (尚未登录,将直接登录)");
         }
     }
 
@@ -177,17 +179,17 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         None => false,
     };
     if session_ok && !force {
-        println!("[5/5] 登录验证 ... 通过 (会话有效,无需重新登录;可用 --force 强制验证凭据)");
+        println!("[5/6] 登录验证 ... 通过 (会话有效,无需重新登录;可用 --force 强制验证凭据)");
     } else {
         if force {
-            println!("[5/5] 登录验证 ... 使用 --force 强制重新登录以验证凭据");
+            println!("[5/6] 登录验证 ... 使用 --force 强制重新登录以验证凭据");
         }
         match crate::auth::login(&cfg, profile) {
             Ok(_) => {
                 step(5, total, "登录验证", true, "登录成功,凭据已保存");
             }
             Err(e) => {
-                println!("[5/5] 登录验证 ... 失败 ({e})");
+                println!("[5/6] 登录验证 ... 失败 ({e})");
                 all_ok = false;
                 guidance(&[
                     "请检查:",
@@ -200,9 +202,33 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         }
     }
 
+    match crate::commands::panel_version(profile) {
+        Ok((version, edition)) => {
+            let compatible = version.starts_with("v2.") || version.starts_with("2.");
+            step(
+                6,
+                total,
+                "面板版本兼容性",
+                compatible,
+                &format!("{version} ({edition});已验证基线 dev-v2"),
+            );
+            if !compatible {
+                all_ok = false;
+                guidance(&["当前技能包面向 1Panel v2;请升级面板后再使用写操作。"]);
+            }
+        }
+        Err(e) => {
+            step(6, total, "面板版本兼容性", false, &e.to_string());
+            all_ok = false;
+        }
+    }
+
     println!();
     if all_ok {
-        println!("环境检查全部通过,可以开始使用:\n  {:<20} 检查登录状态", "1panel-cli status");
+        println!(
+            "环境检查全部通过,可以开始使用:\n  {:<20} 检查登录状态",
+            "1panel-cli status"
+        );
         println!("  {:<20} 列出可安装应用", "1panel-cli apps list");
         println!("  {:<20} 更多命令见 1panel-cli --help", "");
     } else {

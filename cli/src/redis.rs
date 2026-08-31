@@ -28,7 +28,10 @@ pub fn list(profile: &str) -> Result<()> {
         .json()
         .map_err(|e| anyhow!("查询 Redis 实例失败: {e}"))?;
     check_code(&resp)?;
-    let items = resp["data"]["items"].as_array().cloned().unwrap_or_default();
+    let items = resp["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     println!("{:<8} {:<16} {:<12} {:<10}", "ID", "名称", "状态", "版本");
     for it in &items {
         if it["appKey"].as_str() != Some("redis") {
@@ -92,7 +95,10 @@ pub fn info(profile: &str, name: &str) -> Result<()> {
     println!("  端口: {}", conf["port"].as_i64().unwrap_or(0));
     println!("  容器: {}", conf["containerName"].as_str().unwrap_or(""));
     println!("  timeout: {}", conf["timeout"].as_str().unwrap_or(""));
-    println!("  maxclients: {}", conf["maxclients"].as_str().unwrap_or(""));
+    println!(
+        "  maxclients: {}",
+        conf["maxclients"].as_str().unwrap_or("")
+    );
     println!("  maxmemory: {}", conf["maxmemory"].as_str().unwrap_or(""));
     println!(
         "  requirepass: {}",
@@ -118,9 +124,18 @@ pub fn config(profile: &str, name: &str, opts: &ConfigOptions) -> Result<()> {
     if opts.set.is_empty() {
         println!("Redis 配置({name}):");
         println!("  timeout    = {}", conf["timeout"].as_str().unwrap_or(""));
-        println!("  maxclients = {}", conf["maxclients"].as_str().unwrap_or(""));
-        println!("  maxmemory  = {}", conf["maxmemory"].as_str().unwrap_or(""));
-        println!("  requirepass= {}", conf["requirepass"].as_str().unwrap_or(""));
+        println!(
+            "  maxclients = {}",
+            conf["maxclients"].as_str().unwrap_or("")
+        );
+        println!(
+            "  maxmemory  = {}",
+            conf["maxmemory"].as_str().unwrap_or("")
+        );
+        println!(
+            "  requirepass= {}",
+            conf["requirepass"].as_str().unwrap_or("")
+        );
         return Ok(());
     }
 

@@ -252,7 +252,12 @@ fn print_table(items: &[AppItem], total: i64) {
             it.tags.join(", "),
         ]);
     }
-    let w = |idx: usize| rows.iter().map(|r| r[idx].chars().count()).max().unwrap_or(0);
+    let w = |idx: usize| {
+        rows.iter()
+            .map(|r| r[idx].chars().count())
+            .max()
+            .unwrap_or(0)
+    };
     let (wt, wn, wk, wi, wtags) = (w(0), w(1), w(2), w(3), w(4));
     let sep = |widths: &[usize]| {
         println!(
