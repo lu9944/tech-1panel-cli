@@ -1,6 +1,6 @@
 # 1panel-cli v0.3.0 命令速查
 
-先运行 `1panel-cli doctor`,确认六项检查通过。所有命令支持全局参数 `--env <PATH>`、`--profile <NAME>`、`--node <NODE>`;节点也可由 `PANEL_NODE` 设置。
+先运行 `1panel-cli doctor`,确认八项检查通过(含本地 SSH 连接连通性与 sudo 免密)。所有命令支持全局参数 `--env <PATH>`、`--profile <NAME>`、`--node <NODE>`;节点也可由 `PANEL_NODE` 设置。
 
 ## 会话
 
@@ -10,7 +10,7 @@
 | `status` | 检查会话并显示面板版本/版本类型 |
 | `info` | 查看脱敏后的会话信息 |
 | `logout` | 登出并清除本地凭据 |
-| `doctor [--force]` | 检查配置、连通性、会话、登录与面板版本兼容性 |
+| `doctor [--force]` | 检查配置、连通性、会话、登录、面板版本兼容性,并实测本地 SSH 连接(exec 身份)与 sudo 免密(exec --sudo 前置) |
 
 ## apps — 应用商店
 
@@ -93,7 +93,9 @@
 
 通过终端 WebSocket(`/api/v2/hosts/terminal/local`)把单行命令推送到面板本机执行,等待完成后一次性取回输出,非交互。退出码透传:命令完成时 CLI 以命令退出码退出(0 成功;1-255 透传;124 超时;CLI 自身错误为 1,可用 `--json` 的 `error` 字段精确区分)。
 
-前置条件:面板已配置「设置 → 终端 → SSH 本地连接」;未配置时可在 `.env` 中提供 `LINUX_SSH_USER` / `LINUX_SSH_PWD`,然后用 `--sync-ssh` 自动写入。
+前置条件:面板已配置「设置 → 终端 → SSH 本地连接」。在 `.env` 中声明 `LINUX_SSH_USER` / `LINUX_SSH_PWD` 后,`login` 会自动写入该连接,`exec` 执行时也会自动对齐(连接缺失或用户不一致即覆盖);`--sync-ssh` 用于显式强制覆盖。
+
+执行身份说明:命令由面板服务端用**已保存的「SSH 本地连接」**凭据 SSH 到 `127.0.0.1` 执行,身份 = 该连接配置的用户,与面板登录账号无关。配置了 `LINUX_SSH_USER`/`LINUX_SSH_PWD` 时 exec 默认就以该(普通)用户执行、不接触 root;需要 root 权限的命令加 `--sudo`(需免密 sudo)。用 `exec 'whoami'` 确认实际身份,`doctor` 第 7/8 步会自动实测。
 
 | 命令 | 说明 |
 |---|---|
@@ -104,12 +106,15 @@
 | `exec <CMD> --raw` | 不清洗输出(保留 ANSI/回显/提示符/哨兵;默认剥离) |
 | `exec <CMD> --cols N --rows N` | PTY 尺寸(默认 120x40) |
 | `exec <CMD> --sync-ssh [--ssh-port N]` | 先用 LINUX_SSH_USER/LINUX_SSH_PWD 自动配置本地 SSH 连接再执行 |
+| `exec <CMD> --sudo` | 以 root 身份执行(包进 `sudo -n -H bash -c`;要求 SSH 用户已配置免密 sudo,否则立即报 `a password is required` 而非挂到超时) |
 
 示例:
 
 ```sh
 1panel-cli exec 'ls -la /var/www'
 1panel-cli exec 'echo hello && hostname' --sync-ssh
+1panel-cli exec 'whoami'                  # 确认实际身份(root / ubuntu …)
+1panel-cli exec 'apt-get install -y jq' --sudo   # 非 root 身份时提权执行
 1panel-cli exec 'bash deploy.sh' --cwd /opt/myapp --timeout 300
 1panel-cli exec 'systemctl status docker' --timeout 10; echo "exit=$?"
 1panel-cli exec 'whoami' --json

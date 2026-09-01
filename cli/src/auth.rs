@@ -165,6 +165,20 @@ pub fn login(cfg: &PanelConfig, profile: &str) -> Result<Session> {
         session.username, session.panel_name
     );
     println!("会话凭据已保存到: {}", path.display());
+
+    // 初始化面板本地 SSH 连接:.env 声明了 LINUX_SSH_USER/PWD 时立即写入,
+    // 保证 exec 默认以该用户执行,而不是残留的 root 连接(root 操作用 --sudo 提权)
+    if let (Some(user), Some(pwd)) = crate::config::linux_ssh_creds() {
+        match crate::exec::ensure_local_conn(profile, &user, &pwd, crate::exec::DEFAULT_SSH_PORT) {
+            Ok(()) => println!(
+                "面板本地 SSH 连接已配置为用户 {user}(exec 将以该用户执行;root 操作加 --sudo)"
+            ),
+            Err(e) => eprintln!(
+                "警告: 自动配置面板本地 SSH 连接失败: {e:#}\n(不影响登录;请修正 LINUX_SSH_USER/LINUX_SSH_PWD 后重跑 login,或运行 doctor 复查)"
+            ),
+        }
+    }
+
     Ok(session)
 }
 

@@ -15,7 +15,7 @@
 - `redis` Redis 实例操作:状态/配置/密码(与 db 平级)
 - `firewall` 防火墙操作:状态、启停、Ping、端口/IP/转发规则增删查、批量放行;新版面板支持 Docker 端口守护(status/ports/sync/operate/allow/deny/policy-del)
 - `web`    网站(OpenResty/nginx)操作:网站列表、nginx 配置读写、HTTPS/SSL、文件上传与解压
-- `exec`   在面板本机执行单行命令(终端 WebSocket):退出码透传、输出清洗、`--cwd`/`--timeout`/`--json`/`--tail`、`--sync-ssh` 自动配置本地 SSH 连接
+- `exec`   在面板本机执行单行命令(终端 WebSocket):退出码透传、输出清洗、`--cwd`/`--timeout`/`--json`/`--tail`、`--sync-ssh` 自动配置本地 SSH 连接、`--sudo` 以 root 身份执行;身份 = 面板本地 SSH 连接用户(配置 LINUX_SSH_USER/PWD 后 login 自动写入、exec 自动对齐,默认普通用户)
 - `api`    发现官方源码路由、查看 Swagger 模型并调用 GET/POST/PUT/DELETE
 
 ## 构建
@@ -54,7 +54,8 @@ PANEL_PASSWORD=changeme
 # 可选:多节点面板目标节点(默认 local)
 # PANEL_NODE=local
 
-# 可选:面板所在主机的 SSH 凭据(仅 exec --sync-ssh 自动配置本地连接时使用)
+# 可选:面板所在主机的 SSH 凭据(login 自动写入本地 SSH 连接,exec 自动对齐;
+# exec 默认以该用户执行,root 命令加 --sudo,需免密 sudo)
 # LINUX_SSH_USER=ubuntu
 # LINUX_SSH_PWD=changeme
 ```
@@ -81,7 +82,7 @@ PANEL_PASSWORD=changeme
 1panel-cli api list --filter templates
 1panel-cli api describe POST websites/templates/search
 
-# 环境检查(.env / 连通性 / 会话 / 登录,失败时给出修复指导)
+# 环境检查(.env / 连通性 / 会话 / 登录 / 面板版本 / 本地 SSH 连接连通性 / sudo 免密,失败时给出修复指导)
 1panel-cli doctor                      # 快速检查
 1panel-cli doctor --force              # 强制重新登录验证账号密码
 
@@ -162,10 +163,13 @@ PANEL_PASSWORD=changeme
 1panel-cli firewall docker policy-del --uuid <UUID>                  # 删除策略
 
 # 在面板本机执行命令(前置:面板已配置本地 SSH 连接,或用 --sync-ssh 自动配置)
+# 身份 = 面板本地 SSH 连接的用户(常见 root);--sync-ssh 覆盖之;--sudo 以 sudo 提权
 1panel-cli exec 'echo hello && hostname' --sync-ssh  # 自动写入本地 SSH 连接后执行
 1panel-cli exec 'df -h && free -m'                   # 执行并打印清洗后输出
 1panel-cli exec 'bash deploy.sh' --cwd /opt/myapp --timeout 300   # 切目录 + 调大超时
 1panel-cli exec 'systemctl status docker'; echo "exit=$?"         # 退出码透传
+1panel-cli exec 'whoami'                             # 确认实际身份(root / ubuntu …)
+1panel-cli exec 'apt-get install -y jq' --sudo       # 非 root 身份时提权(需免密 sudo)
 1panel-cli exec 'whoami' --json                      # 单行 JSON 结构化结果
 1panel-cli exec 'bash build.sh' --cwd /opt/app --tail 50          # 超长输出只看结尾
 # 长任务建议后台化后轮询日志,不要拉大 --timeout 硬等:

@@ -152,6 +152,9 @@ enum Commands {
         /// --sync-ssh 时使用的 SSH 端口(默认 22)
         #[arg(long, default_value_t = exec::DEFAULT_SSH_PORT)]
         ssh_port: u16,
+        /// 以 root 身份执行(包进 sudo -n -H bash -c;要求 SSH 用户已配置免密 sudo)
+        #[arg(long)]
+        sudo: bool,
     },
 }
 
@@ -1146,6 +1149,7 @@ fn main() -> Result<()> {
             raw,
             sync_ssh,
             ssh_port,
+            sudo,
         } => {
             let opts = exec::ExecOptions {
                 command,
@@ -1158,6 +1162,7 @@ fn main() -> Result<()> {
                 raw,
                 sync_ssh,
                 ssh_port,
+                sudo,
             };
             std::process::exit(exec::run(&cli.profile, &opts)?);
         }

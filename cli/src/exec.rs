@@ -42,6 +42,8 @@ pub struct ExecOptions {
     pub cwd: Option<String>,
     pub sync_ssh: bool,
     pub ssh_port: u16,
+    /// 以 sudo 执行(要求 SSH 用户配置了免密 sudo)
+    pub sudo: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,8 +111,9 @@ pub fn local_conn_body(user: &str, pwd: &str, port: u16) -> Value {
     })
 }
 
-/// 写入面板"本地 SSH 连接"(保存即由面板真实拨号校验)
-fn ensure_local_conn(profile: &str, user: &str, pwd: &str, port: u16) -> Result<()> {
+/// 写入面板"本地 SSH 连接"(保存即由面板真实拨号校验)。
+/// 供登录初始化与 doctor 复用:确保 exec 以 .env 声明的用户执行,而非残留的 root 连接。
+pub fn ensure_local_conn(profile: &str, user: &str, pwd: &str, port: u16) -> Result<()> {
     let session = load_session(profile)?;
     let client = PanelClient::new(&session.panel_url, Some(&session.cookies), session.insecure)?;
     let resp = client.post_json("api/v2/settings/ssh", &local_conn_body(user, pwd, port))?;
@@ -144,7 +147,13 @@ fn quote_posix(s: &str) -> String {
 /// 组装发送给 shell 的完整命令:预校验 + cwd 拼接 + 子 shell 包裹 + 退出码哨兵。
 /// 用户命令放进 `( )` 子 shell:`exit`/`exec` 类命令只结束子 shell,
 /// 外层 shell 继续执行哨兵 echo,退出码经 `$?` 透传。
-pub fn compose_command(cwd: Option<&str>, command: &str, token: &str) -> Result<String> {
+/// sudo 为 true 时命令包进 `sudo -n -H bash -c`,cd 一并移入 root 环境内执行。
+pub fn compose_command(
+    cwd: Option<&str>,
+    command: &str,
+    token: &str,
+    sudo: bool,
+) -> Result<String> {
     let command = command.trim();
     if command.is_empty() {
         bail!("命令不能为空");
@@ -158,16 +167,27 @@ pub fn compose_command(cwd: Option<&str>, command: &str, token: &str) -> Result<
             command.len()
         );
     }
-    let mut full = match cwd.map(str::trim).filter(|d| !d.is_empty()) {
+    let cd_prefix = match cwd.map(str::trim).filter(|d| !d.is_empty()) {
         Some(dir) => {
             if dir.contains('\n') || dir.contains('\r') {
                 bail!("--cwd 目录不能包含换行符");
             }
-            format!("cd -- {} && ", quote_posix(dir))
+            Some(format!("cd -- {} && ", quote_posix(dir)))
         }
-        None => String::new(),
+        None => None,
     };
-    full.push_str(&format!("( {command} ); echo {SENTINEL_PREFIX}{token}_$?"));
+    let mut full = match (sudo, cd_prefix) {
+        (true, prefix) => {
+            let mut inner = prefix.unwrap_or_default();
+            inner.push_str(command);
+            format!("( sudo -n -H bash -c {} )", quote_posix(&inner))
+        }
+        (false, prefix) => match prefix {
+            Some(p) => format!("{p}( {command} )"),
+            None => format!("( {command} )"),
+        },
+    };
+    full.push_str(&format!("; echo {SENTINEL_PREFIX}{token}_$?"));
     Ok(full)
 }
 
@@ -448,8 +468,15 @@ fn close_quiet(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) {
     let _ = ws.flush();
 }
 
-/// 探测面板本地 SSH 连接是否已配置(GET api/v2/settings/ssh/conn 的 addr 字段)
-fn local_conn_addr(profile: &str) -> Result<String> {
+/// 面板「SSH 本地连接」概要(GET api/v2/settings/ssh/conn)
+#[derive(Debug, Default, Clone)]
+pub struct LocalConnInfo {
+    pub addr: String,
+    pub user: String,
+}
+
+/// 读取面板本地 SSH 连接概要(addr 为空即未配置)
+pub fn local_conn_info(profile: &str) -> Result<LocalConnInfo> {
     let session = load_session(profile)?;
     let client = PanelClient::new(&session.panel_url, Some(&session.cookies), session.insecure)?;
     #[derive(Deserialize)]
@@ -457,6 +484,8 @@ fn local_conn_addr(profile: &str) -> Result<String> {
     struct ConnInfo {
         #[serde(default)]
         addr: String,
+        #[serde(default)]
+        user: String,
     }
     #[derive(Deserialize)]
     struct Resp {
@@ -467,7 +496,15 @@ fn local_conn_addr(profile: &str) -> Result<String> {
         .get("api/v2/settings/ssh/conn")?
         .json()
         .map_err(|e| anyhow!("解析本地连接信息失败: {e}"))?;
-    Ok(resp.data.map(|d| d.addr).unwrap_or_default())
+    Ok(resp.data.map(|d| LocalConnInfo {
+        addr: d.addr,
+        user: d.user,
+    }).unwrap_or_default())
+}
+
+/// 探测面板本地 SSH 连接是否已配置(GET api/v2/settings/ssh/conn 的 addr 字段)
+fn local_conn_addr(profile: &str) -> Result<String> {
+    Ok(local_conn_info(profile)?.addr)
 }
 
 /// 服务端以 Close 帧终止终端会话后的错误归因。
@@ -700,6 +737,41 @@ pub fn run(profile: &str, opts: &ExecOptions) -> Result<i32> {
 }
 
 fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
+    match execute(profile, opts)? {
+        ExecOutcome::Done(result, tail_truncated) => finish(&result, opts, tail_truncated),
+        ExecOutcome::Failed(result, err) => fail_with_output(&result, opts, err),
+    }
+}
+
+/// 供 doctor 等内部调用:执行单行命令,返回 (退出码, 清洗后输出),不打印。
+pub fn run_capture(profile: &str, command: &str, sudo: bool, timeout: i64) -> Result<(i32, String)> {
+    let opts = ExecOptions {
+        command: command.to_string(),
+        timeout,
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+        json: false,
+        tail: None,
+        raw: false,
+        cwd: None,
+        sync_ssh: false,
+        ssh_port: DEFAULT_SSH_PORT,
+        sudo,
+    };
+    match execute(profile, &opts)? {
+        ExecOutcome::Done(result, _) => Ok((result.exit_code, result.output)),
+        ExecOutcome::Failed(_, err) => Err(err),
+    }
+}
+
+/// 执行结果:完成(可打印)或失败(按 --json/文本分流)
+enum ExecOutcome {
+    Done(ExecResult, bool),
+    Failed(ExecResult, anyhow::Error),
+}
+
+/// 执行主流程:预校验 + SSH 连接对齐 + WS 会话,构建结果(不打印)
+fn execute(profile: &str, opts: &ExecOptions) -> Result<ExecOutcome> {
     if opts.timeout <= 0 {
         bail!("--timeout 必须为正整数秒");
     }
@@ -708,7 +780,7 @@ fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
     }
     let session = load_session(profile)?;
     let token = new_token();
-    let composed = compose_command(opts.cwd.as_deref(), &opts.command, &token)?;
+    let composed = compose_command(opts.cwd.as_deref(), &opts.command, &token, opts.sudo)?;
 
     if opts.sync_ssh {
         let (user, pwd) = config::linux_ssh_creds();
@@ -716,6 +788,20 @@ fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
             bail!("--sync-ssh 需要在 .env(或环境变量)中配置 LINUX_SSH_USER / LINUX_SSH_PWD");
         };
         ensure_local_conn(profile, &user, &pwd, opts.ssh_port)?;
+    } else {
+        // 自动对齐:.env 声明了 SSH 用户时,不允许残留 root 等其他连接,
+        // 连接缺失或用户不一致时自动覆盖写入(exec 默认以普通用户执行,root 用 --sudo)
+        if let (Some(user), Some(pwd)) = config::linux_ssh_creds() {
+            let needs_sync = match local_conn_info(profile) {
+                Ok(info) => {
+                    info.addr.is_empty() || (!info.user.is_empty() && info.user != user)
+                }
+                Err(_) => false,
+            };
+            if needs_sync {
+                ensure_local_conn(profile, &user, &pwd, opts.ssh_port)?;
+            }
+        }
     }
 
     let (state, buf, truncated, duration_ms) = run_ws_session(&session, &composed, &token, opts)?;
@@ -724,7 +810,7 @@ fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
             let code = code.clamp(0, 255);
             let (result, tail_truncated) =
                 build_result(opts, &buf, &token, truncated, None, code, duration_ms);
-            finish(&result, opts, tail_truncated)
+            Ok(ExecOutcome::Done(result, tail_truncated))
         }
         EndState::TimedOut => {
             let (result, tail_truncated) = build_result(
@@ -739,7 +825,7 @@ fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
                 124,
                 duration_ms,
             );
-            finish(&result, opts, tail_truncated)
+            Ok(ExecOutcome::Done(result, tail_truncated))
         }
         EndState::ServerClosed(reason) => {
             let err = explain_server_close(profile, &reason);
@@ -752,7 +838,7 @@ fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
                 1,
                 duration_ms,
             );
-            fail_with_output(&result, opts, err)
+            Ok(ExecOutcome::Failed(result, err))
         }
         EndState::Disconnected(what) => {
             let err = anyhow!("{what}(shell 可能已退出或面板 agent 重启),命令可能未执行完成");
@@ -765,7 +851,7 @@ fn run_inner(profile: &str, opts: &ExecOptions) -> Result<i32> {
                 1,
                 duration_ms,
             );
-            fail_with_output(&result, opts, err)
+            Ok(ExecOutcome::Failed(result, err))
         }
     }
 }
@@ -885,33 +971,52 @@ mod tests {
     #[test]
     fn test_compose_command_basic_and_sentinel() {
         let token = "deadbeef";
-        let cmd = compose_command(None, "ls -la", token).unwrap();
+        let cmd = compose_command(None, "ls -la", token, false).unwrap();
         assert_eq!(cmd, "( ls -la ); echo __1PCLI_deadbeef_$?");
-        let cmd = compose_command(Some("/opt/myapp"), "bash deploy.sh", token).unwrap();
+        let cmd = compose_command(Some("/opt/myapp"), "bash deploy.sh", token, false).unwrap();
         assert_eq!(
             cmd,
             "cd -- '/opt/myapp' && ( bash deploy.sh ); echo __1PCLI_deadbeef_$?"
         );
         // exit/exec 类命令被子 shell 隔离,哨兵仍可执行并透传退出码
-        let cmd = compose_command(None, "exit 7", token).unwrap();
+        let cmd = compose_command(None, "exit 7", token, false).unwrap();
         assert_eq!(cmd, "( exit 7 ); echo __1PCLI_deadbeef_$?");
+    }
+
+    #[test]
+    fn test_compose_command_sudo() {
+        let token = "deadbeef";
+        let cmd = compose_command(None, "systemctl restart nginx", token, true).unwrap();
+        assert_eq!(
+            cmd,
+            "( sudo -n -H bash -c 'systemctl restart nginx' ); echo __1PCLI_deadbeef_$?"
+        );
+        // --sudo 时 cd 移入 sudo 环境内执行(目录可能仅 root 可读)
+        let cmd = compose_command(Some("/opt/a b"), "ls", token, true).unwrap();
+        assert_eq!(
+            cmd,
+            r"( sudo -n -H bash -c 'cd -- '\''/opt/a b'\'' && ls' ); echo __1PCLI_deadbeef_$?"
+        );
+        // 预校验对 sudo 路径同样生效
+        assert!(compose_command(None, "  ", token, true).is_err());
+        assert!(compose_command(None, "echo a\necho b", token, true).is_err());
     }
 
     #[test]
     fn test_compose_command_cwd_quoting_and_validation() {
         let token = "deadbeef";
-        let cmd = compose_command(Some("/opt/a b/c"), "true", token).unwrap();
+        let cmd = compose_command(Some("/opt/a b/c"), "true", token, false).unwrap();
         assert!(cmd.starts_with("cd -- '/opt/a b/c' && ( true ); "), "{cmd}");
-        let cmd = compose_command(Some("/opt/it's"), "true", token).unwrap();
+        let cmd = compose_command(Some("/opt/it's"), "true", token, false).unwrap();
         assert!(
             cmd.starts_with(r"cd -- '/opt/it'\''s' && ( true ); "),
             "{cmd}"
         );
         // 预校验:空命令 / 换行
-        assert!(compose_command(None, "  ", token).is_err());
-        assert!(compose_command(None, "echo a\necho b", token).is_err());
-        assert!(compose_command(None, "echo a\recho b", token).is_err());
-        assert!(compose_command(Some("/opt/a\nb"), "true", token).is_err());
+        assert!(compose_command(None, "  ", token, false).is_err());
+        assert!(compose_command(None, "echo a\necho b", token, false).is_err());
+        assert!(compose_command(None, "echo a\recho b", token, false).is_err());
+        assert!(compose_command(Some("/opt/a\nb"), "true", token, false).is_err());
     }
 
     #[test]

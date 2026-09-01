@@ -11,14 +11,22 @@ fn step(n: usize, total: usize, title: &str, ok: bool, detail: &str) {
     println!("[{n}/{total}] {title} ... {mark} ({detail})");
 }
 
+fn step_warn(n: usize, total: usize, title: &str, detail: &str) {
+    println!("[{n}/{total}] {title} ... 警告 ({detail})");
+}
+
 fn guidance(lines: &[&str]) {
     for l in lines {
         println!("    - {l}");
     }
 }
 
+fn guidance_owned(lines: &[String]) {
+    guidance(&lines.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
 pub fn doctor(profile: &str, force: bool) -> Result<()> {
-    let total = 6;
+    let total = 8;
     let mut all_ok = true;
 
     println!("1Panel CLI 环境检查 (profile: {profile})\n");
@@ -46,7 +54,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
     let cfg = match PanelConfig::from_env(&ConfigOverrides::default()) {
         Ok(c) => Some(c),
         Err(e) => {
-            println!("[2/6] 配置项 ... 失败 ({e})");
+            println!("[2/{total}] 配置项 ... 失败 ({e})");
             guidance(&[
                 "缺少环境变量: PANEL_URL / PANEL_USERNAME / PANEL_PASSWORD",
                 "在 .env 中添加,例如:",
@@ -81,7 +89,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
     let client = match PanelClient::new(&cfg.url, None, cfg.insecure) {
         Ok(c) => c,
         Err(e) => {
-            println!("[3/6] 面板地址 ... 失败 ({e})");
+            println!("[3/{total}] 面板地址 ... 失败 ({e})");
             return Ok(());
         }
     };
@@ -107,7 +115,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
             }
         }
         Err(e) => {
-            println!("[3/6] 面板地址 ... 失败 ({e})");
+            println!("[3/{total}] 面板地址 ... 失败 ({e})");
             all_ok = false;
             guidance(&[
                 "无法连接面板地址,请检查:",
@@ -124,7 +132,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         Some(s) => {
             if s.panel_url != cfg.url {
                 println!(
-                    "[4/6] 已保存会话 ... 失败 (会话地址 {} 与配置地址 {} 不一致)",
+                    "[4/{total}] 已保存会话 ... 失败 (会话地址 {} 与配置地址 {} 不一致)",
                     s.panel_url, cfg.url
                 );
                 all_ok = false;
@@ -136,7 +144,7 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
                 let sclient = match PanelClient::new(&s.panel_url, Some(&s.cookies), s.insecure) {
                     Ok(c) => c,
                     Err(_) => {
-                        println!("[4/6] 已保存会话 ... 失败 (凭据解析失败)");
+                        println!("[4/{total}] 已保存会话 ... 失败 (凭据解析失败)");
                         return Ok(());
                     }
                 };
@@ -162,14 +170,14 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
                         }
                     }
                     Err(e) => {
-                        println!("[4/6] 已保存会话 ... 失败 ({e})");
+                        println!("[4/{total}] 已保存会话 ... 失败 ({e})");
                         all_ok = false;
                     }
                 }
             }
         }
         None => {
-            println!("[4/6] 已保存会话 ... 跳过 (尚未登录,将直接登录)");
+            println!("[4/{total}] 已保存会话 ... 跳过 (尚未登录,将直接登录)");
         }
     }
 
@@ -179,17 +187,17 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         None => false,
     };
     if session_ok && !force {
-        println!("[5/6] 登录验证 ... 通过 (会话有效,无需重新登录;可用 --force 强制验证凭据)");
+        println!("[5/{total}] 登录验证 ... 通过 (会话有效,无需重新登录;可用 --force 强制验证凭据)");
     } else {
         if force {
-            println!("[5/6] 登录验证 ... 使用 --force 强制重新登录以验证凭据");
+            println!("[5/{total}] 登录验证 ... 使用 --force 强制重新登录以验证凭据");
         }
         match crate::auth::login(&cfg, profile) {
             Ok(_) => {
                 step(5, total, "登录验证", true, "登录成功,凭据已保存");
             }
             Err(e) => {
-                println!("[5/6] 登录验证 ... 失败 ({e})");
+                println!("[5/{total}] 登录验证 ... 失败 ({e})");
                 all_ok = false;
                 guidance(&[
                     "请检查:",
@@ -220,6 +228,149 @@ pub fn doctor(profile: &str, force: bool) -> Result<()> {
         Err(e) => {
             step(6, total, "面板版本兼容性", false, &e.to_string());
             all_ok = false;
+        }
+    }
+
+    // 7. 本地 SSH 连接(exec 前置):配置状态 + 与 .env 声明用户对齐 + 实测连通性
+    let creds = crate::config::linux_ssh_creds();
+    let mut conn_user: Option<String> = crate::exec::local_conn_info(profile)
+        .ok()
+        .filter(|c| !c.addr.is_empty())
+        .map(|c| c.user);
+
+    // .env 声明了凭据且连接缺失/用户不一致时,自动覆盖写入(exec 默认以声明用户执行,不残留 root)
+    if let (Some(user), Some(pwd)) = (&creds.0, &creds.1) {
+        let mismatch = match &conn_user {
+            None => true,
+            Some(u) => !u.is_empty() && u != user,
+        };
+        if mismatch {
+            match crate::exec::ensure_local_conn(profile, user, pwd, crate::exec::DEFAULT_SSH_PORT)
+            {
+                Ok(()) => {
+                    println!(
+                        "[7/{total}] 本地 SSH 连接 ... 自动改配为用户 {user}(原为 {})",
+                        conn_user.as_deref().unwrap_or("未配置")
+                    );
+                    conn_user = Some(user.clone());
+                }
+                Err(e) => {
+                    step(
+                        7,
+                        total,
+                        "本地 SSH 连接 (exec 前置)",
+                        false,
+                        &format!("自动改配失败: {e:#}"),
+                    );
+                    all_ok = false;
+                    guidance_owned(&[
+                        "写入面板「设置 → 终端 → SSH 本地连接」失败:".to_string(),
+                        "  1) 检查 LINUX_SSH_USER / LINUX_SSH_PWD 是否正确".to_string(),
+                        "  2) 确认主机 SSH 服务已启用(端口默认 22,可用 exec --ssh-port 调整)".to_string(),
+                    ]);
+                }
+            }
+        }
+    }
+
+    let mut ssh_ok = false;
+    let who = conn_user.clone().unwrap_or_default();
+    match conn_user {
+        None => {
+            step(
+                7,
+                total,
+                "本地 SSH 连接 (exec 前置)",
+                false,
+                "面板未配置,且 .env 未声明 LINUX_SSH_USER / LINUX_SSH_PWD",
+            );
+            all_ok = false;
+            guidance_owned(&[
+                "exec 需要面板先配置「设置 → 终端 → SSH 本地连接」:".to_string(),
+                "  1) 在 .env 中添加 LINUX_SSH_USER / LINUX_SSH_PWD,重跑 doctor 或 login 即自动写入".to_string(),
+                "  2) 或到面板 UI 手动配置".to_string(),
+            ]);
+        }
+        Some(user) => match crate::exec::run_capture(profile, "whoami", false, 20) {
+            Ok((0, out)) => {
+                let actual = out.trim();
+                let extra = if actual.is_empty() {
+                    String::new()
+                } else if actual == user {
+                    format!(",whoami 实测 {actual}")
+                } else {
+                    format!(",whoami 实测为 {actual}(与连接声明用户不一致)")
+                };
+                step(
+                    7,
+                    total,
+                    "本地 SSH 连接 (exec 前置)",
+                    true,
+                    &format!("用户 {user}{extra}"),
+                );
+                ssh_ok = true;
+            }
+            Ok((code, out)) => {
+                step(
+                    7,
+                    total,
+                    "本地 SSH 连接 (exec 前置)",
+                    false,
+                    &format!("whoami 退出码 {code}: {}", out.trim()),
+                );
+                all_ok = false;
+                guidance_owned(&[
+                    format!("用户 {user} 的本地 SSH 连接验证失败,exec 无法执行:"),
+                    "  1) 凭据可能已变更:重跑 1panel-cli login 自动改配".to_string(),
+                    format!("  2) 或到面板「设置 → 终端 → SSH 本地连接」核对 {user} 的密码与端口"),
+                ]);
+            }
+            Err(e) => {
+                step(7, total, "本地 SSH 连接 (exec 前置)", false, &format!("{e:#}"));
+                all_ok = false;
+                guidance_owned(&[
+                    "exec 连通性验证失败:".to_string(),
+                    "  1) 重跑 1panel-cli login(或 exec --sync-ssh)改配本地 SSH 连接".to_string(),
+                    "  2) 确认主机 SSH 服务可达".to_string(),
+                ]);
+            }
+        },
+    }
+
+    // 8. sudo 免密(exec --sudo 前置;不阻塞整体通过,仅告警)
+    if !ssh_ok {
+        println!("[8/{total}] sudo 免密 ... 跳过 (上一步 SSH 连接未验证通过)");
+    } else {
+        match crate::exec::run_capture(profile, "true", true, 20) {
+            Ok((0, _)) => {
+                step(
+                    8,
+                    total,
+                    "sudo 免密 (exec --sudo 前置)",
+                    true,
+                    &format!("用户 {who} 可免密 sudo"),
+                );
+            }
+            Ok((code, out)) => {
+                step_warn(
+                    8,
+                    total,
+                    "sudo 免密 (exec --sudo 前置)",
+                    &format!("sudo -n 退出码 {code}: {}", out.trim()),
+                );
+                guidance_owned(&[
+                    format!("用户 {who} 未配置免密 sudo,exec --sudo 将失败;如需提权,在主机上配置:"),
+                    format!("  echo '{who} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/1panel-cli"),
+                    "  或将本地 SSH 连接改配为 root(此时不需要 --sudo)".to_string(),
+                ]);
+            }
+            Err(e) => {
+                step_warn(8, total, "sudo 免密 (exec --sudo 前置)", &format!("{e:#}"));
+                guidance_owned(&[
+                    format!("无法验证用户 {who} 的免密 sudo;如需 --sudo 提权,在主机上配置:"),
+                    format!("  echo '{who} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/1panel-cli"),
+                ]);
+            }
         }
     }
 

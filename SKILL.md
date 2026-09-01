@@ -28,7 +28,15 @@ metadata:
 
 把 `.env.example` 复制为 `.env`,至少填写 `PANEL_URL`、`PANEL_USERNAME`、`PANEL_PASSWORD`;启用安全入口时填写 `PANEL_ENTRANCE`。多节点面板可设置 `PANEL_NODE` 或传全局参数 `--node`。会话保存在 `~/.config/1panel-cli/<profile>.json`。
 
-`exec` 命令(面板本机执行命令)需要面板先配置「设置 → 终端 → SSH 本地连接」;可在 `.env` 中提供 `LINUX_SSH_USER` / `LINUX_SSH_PWD`,首次执行时加 `--sync-ssh` 自动写入。
+`exec` 命令(面板本机执行命令)需要面板先配置「设置 → 终端 → SSH 本地连接」。**在 `.env` 中提供 `LINUX_SSH_USER` / `LINUX_SSH_PWD` 后,`login` 时会自动把本地连接写为该用户;`exec` 执行时也会自动对齐(连接缺失或用户不一致即覆盖),无需手动干预**。
+
+**exec 的执行身份**(排障必读):
+
+- exec 实际是面板服务端用**已保存的「SSH 本地连接」**凭据 SSH 到 `127.0.0.1` 后开 shell,身份 = 该连接里配置的用户,与面板登录账号(PANEL_USERNAME)无关。
+- 配置了 `LINUX_SSH_USER`/`LINUX_SSH_PWD` 时,login 会自动写入、exec 会自动对齐,exec 默认就以该(普通)用户执行,**不会接触 root**。
+- 若面板里残留 root 连接且 .env 未声明凭据,exec 会以 root 执行——这就是有人看到 `whoami` 为 root 的原因;声明凭据后即被自动纠正。
+- 普通用户身份下需要 root 权限时,加 `--sudo`(命令包进 `sudo -n -H bash -c` 执行);要求该用户已配置免密 sudo(云主机 ubuntu 用户通常默认如此),否则 sudo 立即报 `a password is required` 而不是挂到超时。
+- 验证当前身份:`1panel-cli exec 'whoami'`;`doctor` 的第 7/8 步会自动实测 SSH 连通性与免密 sudo。
 
 ## 操作流程
 
@@ -38,7 +46,7 @@ metadata:
 1panel-cli doctor
 ```
 
-仅在六项检查全部通过后继续。优先使用 `apps`、`db`、`redis`、`web`、`firewall` 等专用命令。专用命令无法覆盖时:
+仅在八项检查全部通过后继续(含本地 SSH 连接连通性与 sudo 免密验证)。优先使用 `apps`、`db`、`redis`、`web`、`firewall` 等专用命令。专用命令无法覆盖时:
 
 ```sh
 1panel-cli api list --filter template
@@ -100,10 +108,13 @@ metadata:
 1panel-cli firewall docker allow 8080 --sources 1.2.3.4 --desc web
 1panel-cli firewall docker deny 0.0.0.0:8080 --desc '对外关闭'
 
-# 在面板本机执行命令(前置:面板已配置「设置 → 终端 → SSH 本地连接」,
-# 或 .env 提供 LINUX_SSH_USER / LINUX_SSH_PWD 并加 --sync-ssh 自动配置)
+# 在面板本机执行命令(前置:.env 提供 LINUX_SSH_USER / LINUX_SSH_PWD,
+# login/exec 会自动配置面板「SSH 本地连接」;身份 = 该用户,root 命令加 --sudo)
 1panel-cli exec 'df -h && free -m'
 1panel-cli exec 'echo hello && hostname' --sync-ssh
+1panel-cli exec 'whoami'                  # 先确认实际身份(root / ubuntu …)
+1panel-cli exec 'systemctl restart nginx' --sudo          # 非 root 身份时提权
+1panel-cli exec 'apt-get install -y jq' --sudo --timeout 120
 1panel-cli exec 'bash deploy.sh' --cwd /opt/myapp --timeout 300
 1panel-cli exec 'systemctl status docker' --timeout 10; echo "exit=$?"   # 退出码透传
 1panel-cli exec 'whoami' --json                                          # 脚本/AI 消费
@@ -133,3 +144,4 @@ metadata:
 7. Swagger 不是完整路由清单;以 `references/api-dev-v2.json` 的源码路由为准。企业版闭源扩展接口不在该清单内。
 8. `firewall docker` 与 `rules/check` 等新接口仅在新版面板存在;旧版面板会自动回退到旧防火墙接口,但无 Docker 端口守护。
 9. `exec` 仅支持单行命令,不能包含换行;输出默认清洗(剥离 ANSI/回显/提示符),`--raw` 保留原始流;交互式命令会挂到超时,长任务用轮询模式。
+10. `exec` 身份 = 面板「SSH 本地连接」的用户,与面板登录账号无关;配置 `LINUX_SSH_USER`/`LINUX_SSH_PWD` 后 login 自动写入、exec 自动对齐,默认以普通用户执行,不接触 root;需要 root 权限时加 `--sudo`(需免密 sudo)。权限异常时先 `exec 'whoami'` 确认身份,或跑 `doctor`(第 7 步实测 SSH 连通性、第 8 步验证 sudo 免密)。

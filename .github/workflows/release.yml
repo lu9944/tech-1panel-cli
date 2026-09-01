@@ -39,6 +39,16 @@ jobs:
             target: x86_64-pc-windows-gnu
             bin: 1panel-cli.exe
             artifact: 1panel-skill-windows
+          - os: macos-latest
+            arch: macos-aarch64
+            target: aarch64-apple-darwin
+            bin: 1panel-cli
+            artifact: 1panel-skill-macos
+          - os: macos-latest
+            arch: macos-x86_64
+            target: x86_64-apple-darwin
+            bin: 1panel-cli
+            artifact: 1panel-skill-macos-intel
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -146,6 +156,8 @@ jobs:
             - `1panel-skill.zip` — Linux x86_64
             - `1panel-skill-aarch64.zip` — Linux aarch64
             - `1panel-skill-windows.zip` — Windows x86_64
+            - `1panel-skill-macos.zip` — macOS Apple Silicon (aarch64)
+            - `1panel-skill-macos-intel.zip` — macOS Intel (x86_64)
 
             解压后目录结构:
             ```

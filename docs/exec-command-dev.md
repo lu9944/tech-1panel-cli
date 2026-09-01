@@ -44,8 +44,10 @@ LINUX_SSH_PWD=ubuntu    # 对应用户的 SSH 密码
 
 约定:
 - 由 `cli/src/config.rs` 读取(新增 `ENV_LINUX_SSH_USER` / `ENV_LINUX_SSH_PWD` 常量,复用现有 `env_get` 逻辑),并纳入 `ConfigOverrides` / `PanelConfig`。
-- `exec` 若检测到面板本地 SSH 连接未配置(或用户显式指定 `--sync-ssh`),则用这两个变量调用 `settings/ssh` API 写入本地连接(addr 固定 `127.0.0.1`,port 默认 `22`,authMode `password`),使 `hosts/terminal/local` 可用。
-- 未设置这两个变量时,`exec` 不自动配置,直接透传服务端"未配置本地连接"的错误。
+- `login` 成功后即用这两个变量写入面板本地 SSH 连接(addr 固定 `127.0.0.1`,port 默认 `22`,authMode `password`),作为初始化的一部分。
+- `exec` 执行时自动对齐:检测到本地连接未配置,或其用户与 `LINUX_SSH_USER` 不一致时,自动覆盖写入——保证 exec 默认以 .env 声明的(普通)用户执行,不残留 root 连接;root 操作用 `--sudo`。
+- `--sync-ssh` 为显式强制覆盖(跳过不一致判断);未设置这两个变量时,`exec` 不自动配置,直接透传服务端"未配置本地连接"的错误。
+- `doctor` 第 7 步实测本地连接(`whoami` 验证连通性与身份),第 8 步验证 `sudo -n true`(免密 sudo,`--sudo` 前置)。
 
 ## 1. 背景与目标
 
@@ -174,6 +176,8 @@ WhiteAllow → BindDomain → FrontendFallback → OperationLog → GlobalLoadin
     [--raw]              不做输出清洗(保留 ANSI/回显/提示符/哨兵;默认清洗)
     [--sync-ssh]         用 LINUX_SSH_USER / LINUX_SSH_PWD 自动配置面板本地 SSH 连接后执行
     [--ssh-port N]       --sync-ssh 时使用的 SSH 端口(默认 22)
+    [--sudo]             以 root 身份执行:命令包进 `sudo -n -H bash -c '<cmd>'`(--cwd 的 cd 一并移入 sudo 环境内);
+                         要求 SSH 用户已配置免密 sudo,否则 sudo -n 立即报 "a password is required"(退出码 1),不会挂到超时
 ```
 
 示例:
